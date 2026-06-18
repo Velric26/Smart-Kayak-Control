@@ -1,4 +1,5 @@
 #pragma once
+#include "config.h"
 // =====================================================================
 //  MotorDriver  -  abstract actuator interface (the migration boundary).
 //  Everything above the HAL speaks only normalized thrust [-1.0, +1.0].
@@ -24,4 +25,7 @@ public:
   // Final applied output per side [-1,1], after invert + min-drive.
   // Updated by setThrust()/disable() so telemetry can show real motor drive.
   float lastL = 0, lastR = 0;
+
+  // Per-side minimum drive (live-tunable to match mismatched motors).
+  float minDriveL = MOTOR_MIN_DRIVE_L, minDriveR = MOTOR_MIN_DRIVE_R;
 };

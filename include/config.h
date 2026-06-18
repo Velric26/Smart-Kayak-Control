@@ -72,6 +72,17 @@ constexpr int CONTROL_HZ   = 100;  // fast control loop
 constexpr int TELEMETRY_HZ = 5;    // serial/telemetry print rate
 
 // ---------------------------------------------------------------------
+//  Bluetooth Classic (SPP) telemetry mirror. Lets you watch logs and use
+//  live tuning ("kp"/"kd"/"db") off-USB while motors run on battery power.
+//  Pair from a phone/PC with a serial-Bluetooth terminal app.
+// ---------------------------------------------------------------------
+#if defined(PLATFORM_KAYAK)
+constexpr const char* BT_DEVICE_NAME = "SmartKayak-Kayak";
+#else
+constexpr const char* BT_DEVICE_NAME = "SmartKayak-Mule";
+#endif
+
+// ---------------------------------------------------------------------
 //  Battery (2S Li-ion). Tune divider ratio to your resistors (§1.4).
 //  Vbatt = Vadc * BATT_DIVIDER. Example 100k/56k -> ~2.79.
 // ---------------------------------------------------------------------
@@ -98,9 +109,14 @@ constexpr bool MOTOR_R_INVERT = true;
 
 // Minimum drive: smallest output magnitude that actually turns the motor.
 // Below it the motor only whines. Commands are remapped so 0 stays 0 (off)
-// and any non-zero command scales into [MOTOR_MIN_DRIVE, 1]. Tune to just
-// above where the wheel starts to spin. (Kayak thrusters get their own value.)
-constexpr float MOTOR_MIN_DRIVE = 0.50f;  // measured on the mule; retune if motors/surface change
+// and any non-zero command scales into [minDrive, 1]. Tune each side to just
+// above where its wheel starts to spin. (Kayak thrusters get their own values.)
+//
+// Per-side — brushed motors rarely match. If one side fails to break loose at
+// the start of a move, raise that side. Live-tunable over the console:
+// "mnl <v>" (left) / "mnr <v>" (right). Bake the winners here.
+constexpr float MOTOR_MIN_DRIVE_L = 0.45f;
+constexpr float MOTOR_MIN_DRIVE_R = 0.42f;
 
 // ---------------------------------------------------------------------
 //  Magnetometer calibration (from a diag_calib tumble on this board).
@@ -127,6 +143,6 @@ constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn
   constexpr float HDG_KP = 0.015f, HDG_KI = 0.0f,   HDG_KD = 0.004f;
   constexpr float POS_KP = 0.30f,  POS_KI = 0.02f,  POS_KD = 0.0f;
 #else // PLATFORM_MULE
-  constexpr float HDG_KP = 0.012f, HDG_KI = 0.0f,   HDG_KD = 0.002f;
+  constexpr float HDG_KP = 0.0003f, HDG_KI = 0.0f,   HDG_KD = 0.0001f;
   constexpr float POS_KP = 0.50f,  POS_KI = 0.0f,   POS_KD = 0.0f;
 #endif

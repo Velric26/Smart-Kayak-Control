@@ -51,30 +51,41 @@ Run from the project root. `pio` is on PATH (`%USERPROFILE%\.platformio\penv\Scr
   e.g. `pio run -e diag_i2c -t upload`
 Env selection in `platformio.ini` swaps the driver via `build_src_filter` + `DRIVER_ESC` flag.
 
-## Live tuning (no reflash)
-Heading controller is tunable over the serial monitor while running. Type + Enter:
-- `kp <v>` `kd <v>` `db <v>`  (proportional, derivative, deadband in deg). It echoes the new values.
+## Live tuning (no reflash) — over USB **or** Bluetooth
+Type + Enter; each command echoes the new value(s):
+- `kp <v>` `kd <v>` `db <v>` — heading P, D, deadband (deg). Deadband is the calming knob.
+- `mnl <v>` `mnr <v>` — per-side motor min drive (break-loose trim).
+- `amp <v>` — relay amplitude used by auto-tune.
+- `log <hz>` — telemetry rate; `log 0` mutes (auto-muted during `tune`).
+- `tune` — start relay auto-tune (HEADING_HOLD + IMU only); `stop` — abort to neutral.
+
 Telemetry line shows `L=cmd>applied R=cmd>applied` — left of `>` is the controller command,
-right is the post-min-drive value the motor actually receives.
+right is the post-min-drive value the motor actually receives. (`batt=` removed until divider wired.)
 
 ## Current state (as of this handoff)
 - Phases 0–2 complete: build/flash, dual-core FreeRTOS (control on core1 @100Hz, telemetry core0),
   state machine, RC link + latching arm + momentary mode-cycle, RC-loss & battery failsafes,
   manual differential drive (both motors inverted), IMU bring-up, mag calibration, fused heading.
 - Phase 3 (Heading Lock) closed loop WORKS — correct sign, returns to setpoint.
-- **In progress / open:** tuning heading-hold to be less aggressive (added error deadband +
-  softened kp + live tuning). Mid-bench-debug: on the rover, HEADING_HOLD pivots-in-place stall
-  out (motors whine, no rotation) when powered from **USB** — insufficient voltage/current + the
-  L298N's ~2V drop, worst case being a stationary pivot. **Next test: run motors off the 2S
-  pack** (USB to ESP32 for monitor, battery to L298N VS, common ground). Expect real rotation
-  there, then revisit `MOTOR_MIN_DRIVE`.
+- Motors now run off the **2S pack** (USB to ESP32 for monitor only); pivots rotate fine on
+  battery, confirming the earlier USB-power stall was a supply/L298N-drop issue.
+- **Bluetooth telemetry mirror:** `BluetoothSerial` (SPP) mirrors all telemetry + accepts the
+  live-tuning commands, so you can watch logs and tune off-USB while on battery. Pairs as
+  `SmartKayak-Mule` / `SmartKayak-Kayak`. Use `\r\n` line endings (PC terminals need the CR).
+- **Relay auto-tune** (`tune` over the console) drives a bang-bang wag and derives PD gains
+  (Åström–Hägglund). CAVEAT: the per-side min-drive floor is a hard nonlinearity that makes the
+  rover limit-cycle, so auto-tune gains tend to oscillate — the **deadband (`db`) is the real
+  cure**. Tune manually: widen `db` until it sits quiet, then set `kp`/`kd` for correction feel.
+- **In progress / open:** landing final HEADING_HOLD `kp`/`kd`/`db` (deadband-led, not gain-led).
 
 ## Provisional / "do not forget" config values
-- `MOTOR_MIN_DRIVE` currently bumped to ~0.6 while chasing the no-move issue; likely revert
-  toward 0.5 (or lower) once on battery, and lean on the deadband for calming.
-- `BATT_CRITICAL_V = 0.0f` => **battery failsafe DISABLED** for bench. Restore to ~6.0f once the
-  voltage divider is wired. `BATT_DIVIDER = 2.79` (R1=100k/R2=56k -> GPIO34). Treat the on-screen
-  `batt=` value as unreliable until the divider is confirmed wired.
+- Min drive is now **per-side** (`MOTOR_MIN_DRIVE_L` / `MOTOR_MIN_DRIVE_R`, currently 0.45/0.42)
+  — the old single `MOTOR_MIN_DRIVE` scalar is removed. Brushed motors don't match; trim each
+  side live with `mnl <v>` / `mnr <v>` until both break loose together, then bake the winners.
+- **Battery monitor is disabled in firmware** (divider not wired): `BatteryMonitor::update()` is
+  commented out and `warn()`/`critical()` return false; the `batt=` field is dropped from
+  telemetry. `BATT_CRITICAL_V` is now unused. Re-enable `BatteryMonitor.cpp` and restore the
+  `batt=` field once the divider (`BATT_DIVIDER = 2.79`, R1=100k/R2=56k -> GPIO34) is wired.
 - Calibrated/measured constants baked in `config.h`: MAG_OFF, MAG_SCALE (from tumble cal),
   gyro/heading signs, HEADING_FUSE_ALPHA=0.98, motor inverts both true.
 
