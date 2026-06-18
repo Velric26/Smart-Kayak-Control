@@ -21,9 +21,19 @@ void ESC_Driver::begin() {
   // gate motion behind the arming state in the state machine.
 }
 
+// Same min-drive remap as the L298N path (skips the thruster's dead zone).
+static float applyMinDrive(float v) {
+  if (fabsf(v) < 0.02f) return 0.0f;
+  float m = MOTOR_MIN_DRIVE + (1.0f - MOTOR_MIN_DRIVE) * fabsf(v);
+  return (v < 0.0f) ? -m : m;
+}
+
 void ESC_Driver::setThrust(float left, float right) {
   if (MOTOR_L_INVERT) left  = -left;
   if (MOTOR_R_INVERT) right = -right;
+  left  = applyMinDrive(left);
+  right = applyMinDrive(right);
+  lastL = left; lastR = right;
   escL_.writeMicroseconds(toMicros(left));
   escR_.writeMicroseconds(toMicros(right));
 }
@@ -31,4 +41,5 @@ void ESC_Driver::setThrust(float left, float right) {
 void ESC_Driver::disable() {
   escL_.writeMicroseconds(RC_US_NEUTRAL);
   escR_.writeMicroseconds(RC_US_NEUTRAL);
+  lastL = lastR = 0;
 }

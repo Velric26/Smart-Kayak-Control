@@ -56,7 +56,7 @@ into the structure and compile, but the switch/ESC aren't installed yet —
 
 ## Roadmap hooks (where later phases plug in)
 
-- **Phase 2 (IMU/AHRS):** add a `src/estimation/AHRS.*` task using DLHC-specific drivers (L3GD20 gyro 0x6B, LSM303DLHC accel 0x19 / mag 0x1E) feeding a Madgwick/Mahony filter; feed heading to `headingPID`. BMP180 (0x77) read at ~1 Hz for temperature/telemetry only — not in the control path.
+- **Phase 2 (IMU/AHRS):** register-level drivers in `src/estimation/IMU.*` for the L3G4200D gyro (0x69) and LSM303DLHC accel (0x19) / mag (0x1E), feeding a Mahony/Madgwick filter; feed heading to `headingPID`. No barometer on this board. (Bring-up envs: `diag_i2c`, `diag_imu`.)
 - **Phase 3 (heading hold):** populate the `HEADING_HOLD` case in `main.cpp` with `mix(0, headingPID.update(...), L, R)`.
 - **Phase 4 (GPS):** add `src/estimation/GPSReader.*` on UART2.
 - **Phase 5/6 (anchor / combined):** nested loop — `distancePID` (outer, GPS-rate) → `headingPID` (inner).

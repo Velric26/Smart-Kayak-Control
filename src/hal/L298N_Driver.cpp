@@ -24,9 +24,20 @@ void L298N_Driver::driveSide(int pwmPin, int inA, int inB, float v) {
   analogWrite(pwmPin, (int)(fabsf(v) * 255.0f)); // 8-bit duty
 }
 
+// Remap so a zero command stays off and any non-zero command produces at
+// least MOTOR_MIN_DRIVE (skips the no-torque whine zone).
+static float applyMinDrive(float v) {
+  if (fabsf(v) < 0.02f) return 0.0f;
+  float m = MOTOR_MIN_DRIVE + (1.0f - MOTOR_MIN_DRIVE) * fabsf(v);
+  return (v < 0.0f) ? -m : m;
+}
+
 void L298N_Driver::setThrust(float left, float right) {
   if (MOTOR_L_INVERT) left  = -left;
   if (MOTOR_R_INVERT) right = -right;
+  left  = applyMinDrive(left);
+  right = applyMinDrive(right);
+  lastL = left; lastR = right;
   driveSide(PIN_MOTOR_PWM_L, PIN_DIR_IN1, PIN_DIR_IN2, left);
   driveSide(PIN_MOTOR_PWM_R, PIN_DIR_IN3, PIN_DIR_IN4, right);
 }
@@ -37,4 +48,5 @@ void L298N_Driver::disable() {
   digitalWrite(PIN_DIR_IN3, LOW); digitalWrite(PIN_DIR_IN4, LOW);
   analogWrite(PIN_MOTOR_PWM_L, 0);
   analogWrite(PIN_MOTOR_PWM_R, 0);
+  lastL = lastR = 0;
 }

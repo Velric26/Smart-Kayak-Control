@@ -20,4 +20,8 @@ public:
 
   // Human-readable name for telemetry.
   virtual const char* name() const = 0;
+
+  // Final applied output per side [-1,1], after invert + min-drive.
+  // Updated by setThrust()/disable() so telemetry can show real motor drive.
+  float lastL = 0, lastR = 0;
 };

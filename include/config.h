@@ -27,8 +27,8 @@ constexpr int PIN_DIR_IN2 = 14;
 constexpr int PIN_DIR_IN3 = 18;  // right fwd/rev
 constexpr int PIN_DIR_IN4 = 19;
 
-// I2C bus -- 10-DOF IMU module shares this bus (all addresses distinct):
-//   L3GD20(H) gyro 0x6B(/0x6A) | LSM303DLHC accel 0x19, mag 0x1E | BMP180 0x77
+// I2C bus -- 9-DOF IMU (GY-801-type) shares this bus:
+//   L3G4200D gyro 0x69 | LSM303DLHC accel 0x19, mag 0x1E  (no barometer on this board)
 constexpr int PIN_I2C_SDA = 21;
 constexpr int PIN_I2C_SCL = 22;
 
@@ -77,7 +77,9 @@ constexpr int TELEMETRY_HZ = 5;    // serial/telemetry print rate
 // ---------------------------------------------------------------------
 constexpr float BATT_DIVIDER       = 2.79f;
 constexpr float BATT_WARN_V        = 6.6f;  // 3.30 V/cell
-constexpr float BATT_CRITICAL_V    = 6.0f;  // 3.00 V/cell -> failsafe
+// !!! TEMP for bench: battery failsafe DISABLED (no divider wired on GPIO34).
+// !!! RESTORE to 6.0f (3.00 V/cell) once the battery sense divider is in place.
+constexpr float BATT_CRITICAL_V    = 0.0f;
 
 // ---------------------------------------------------------------------
 //  Output shaping
@@ -94,6 +96,29 @@ constexpr float THRUST_SLEW_PER_S  = 4.0f;  // max change in thrust units/sec (s
 constexpr bool MOTOR_L_INVERT = true;
 constexpr bool MOTOR_R_INVERT = true;
 
+// Minimum drive: smallest output magnitude that actually turns the motor.
+// Below it the motor only whines. Commands are remapped so 0 stays 0 (off)
+// and any non-zero command scales into [MOTOR_MIN_DRIVE, 1]. Tune to just
+// above where the wheel starts to spin. (Kayak thrusters get their own value.)
+constexpr float MOTOR_MIN_DRIVE = 0.50f;  // measured on the mule; retune if motors/surface change
+
+// ---------------------------------------------------------------------
+//  Magnetometer calibration (from a diag_calib tumble on this board).
+//  Corrected axis = (raw - MAG_OFF) * MAG_SCALE.
+//  Re-run diag_calib and update these if the IMU is remounted or the
+//  board's nearby metal changes (e.g. final kayak install).
+// ---------------------------------------------------------------------
+constexpr float MAG_OFF[3]   = {-384.5f, 43.5f, -0.5f};  // hard-iron center
+constexpr float MAG_SCALE[3] = {0.847f, 0.969f, 1.269f}; // soft-iron scale
+
+// ---------------------------------------------------------------------
+//  Heading fusion (complementary filter: gyro-Z + magnetic compass).
+// ---------------------------------------------------------------------
+constexpr float GYRO_YAW_SIGN      = +1.0f; // flip to -1 if fused heading runs opposite the compass
+constexpr float HEADING_FUSE_ALPHA = 0.98f; // gyro trust per step (higher = smoother, slower mag pull)
+constexpr float HEADING_TURN_SIGN  = +1.0f; // flip to -1 if HEADING_HOLD turns AWAY from the setpoint
+constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn) - stops setpoint hunting
+
 // ---------------------------------------------------------------------
 //  Control gains -- placeholders. Tune on the mule, RE-TUNE on the water.
 //  Expect kayak gains to differ greatly (inertia + disturbance dominated).
@@ -102,6 +127,6 @@ constexpr bool MOTOR_R_INVERT = true;
   constexpr float HDG_KP = 0.015f, HDG_KI = 0.0f,   HDG_KD = 0.004f;
   constexpr float POS_KP = 0.30f,  POS_KI = 0.02f,  POS_KD = 0.0f;
 #else // PLATFORM_MULE
-  constexpr float HDG_KP = 0.020f, HDG_KI = 0.0f,   HDG_KD = 0.002f;
+  constexpr float HDG_KP = 0.012f, HDG_KI = 0.0f,   HDG_KD = 0.002f;
   constexpr float POS_KP = 0.50f,  POS_KI = 0.0f,   POS_KD = 0.0f;
 #endif

@@ -50,7 +50,7 @@ void setup() {
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setClock(100000);
   Serial.printf("\nI2C scanner  SDA=GPIO%d  SCL=GPIO%d\n", PIN_I2C_SDA, PIN_I2C_SCL);
-  Serial.println("Expecting: 0x6B(/0x6A) gyro, 0x19 accel, 0x1E mag, 0x77 BMP180");
+  Serial.println("Expecting on this board: 0x69 gyro (L3G4200D), 0x19 accel, 0x1E mag");
 }
 
 void loop() {
