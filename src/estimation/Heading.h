@@ -10,8 +10,20 @@ class HeadingAHRS {
 public:
   void  begin(IMU* imu);     // measures gyro-Z bias (hold still ~1.5 s), seeds heading
   void  update(float dt);    // reads IMU and advances the fused heading
-  float deg() const { return h_; }         // fused heading
+
+  // Fused heading, with the north-alignment offset applied + wrapped to [0,360).
+  // The offset reconciles the compass frame with true north (GPS) for ANCHOR;
+  // it cancels out of HEADING_HOLD (relative), so it only affects absolute use.
+  float deg() const {
+    float v = h_ + headingOffset_;
+    while (v >= 360.0f) v -= 360.0f;
+    while (v <    0.0f) v += 360.0f;
+    return v;
+  }
   float compassDeg() const { return compass_; }  // instantaneous compass (debug)
+
+  void  setHeadingOffset(float d) { headingOffset_ = d; }
+  float headingOffset() const { return headingOffset_; }
 
   // Live magnetometer calibration override (from `cal compass` / NVS). Defaults
   // to the config constants; corrected axis = (raw - off) * scale.
@@ -25,5 +37,6 @@ private:
   IMU*  imu_ = nullptr;
   float gzBias_ = 0;
   float h_ = 0, compass_ = 0;
+  float headingOffset_ = 0;   // compass->true-north trim (deg), from `hoff`/NVS
   bool  init_ = false;
 };

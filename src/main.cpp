@@ -53,6 +53,16 @@ HeadingAHRS ahrs;
 bool        imuOk = false;
 float       headingSetpoint = 0;   // captured on entering HEADING_HOLD
 
+// Smart Anchor: position captured on entering ANCHOR (once a fix is available).
+double      anchorLat = 0, anchorLon = 0;
+float       anchorHeading = 0;     // heading captured at engage (ANCHOR_HEADING hold)
+bool        anchorSet = false;
+float       anchorDist = 0, anchorBrg = 0;   // live range (m) + bearing-home (deg), for telemetry
+// Live-tunable anchor params:
+float       ancDeadband = ANCHOR_DEADBAND_M;
+float       ancAccMax = ANCHOR_ACC_MAX_M;    // require GPS accuracy <= this to capture/chase
+float       posKp = POS_KP, posKd = POS_KD;  // distance-PID gains (anchor return)
+
 // Runtime-tunable heading params (adjust live over serial, no reflash):
 //   "kp 0.01"  "kd 0.004"  "db 5"   then Enter.
 float hdgKp = HDG_KP, hdgKd = HDG_KD, hdgDeadband = HEADING_DEADBAND_DEG;
@@ -84,7 +94,11 @@ struct Snapshot {
   bool   gpsFix = false;
   int    gpsSats = 0;
   float  gpsHdop = 99.9f;
+  float  gpsAcc = 99.9f;
   double gpsLat = 0, gpsLon = 0;
+  bool   anchorOn = false, anchorSet = false;
+  float  anchorDist = 0, anchorBrg = 0;
+  float  gpsCog = -1;   // course-over-ground (deg); -1 when stationary/invalid
 } snap;
 portMUX_TYPE snapMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -101,14 +115,20 @@ void telemetryTask(void*) {
     vTaskDelay(pdMS_TO_TICKS(1000 / hz));
     Snapshot s;
     portENTER_CRITICAL(&snapMux); s = snap; portEXIT_CRITICAL(&snapMux);
+    char ancTok[28] = "";
+    if (s.anchorOn)
+      snprintf(ancTok, sizeof(ancTok), "  anc=%s%.1fm@%.0f",
+               s.anchorSet ? "" : "(wait)", s.anchorDist, s.anchorBrg);
+    char cogTok[16] = "";
+    if (s.gpsCog >= 0) snprintf(cogTok, sizeof(cogTok), " cog=%.0f", s.gpsCog);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f sp=%5.1f  arm=%d modeSel=%d  drop=%lu  gps=%ds/%.1f%s  link=%s%s\r\n",
-             modeName(s.mode), s.left, s.appliedL, s.right, s.appliedR, s.heading, s.setpoint,
-             (int)s.armReq, s.modeSel, (unsigned long)s.dropouts,
-             s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "",
+             "[%-14s] L=%+.2f R=%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s%s  drop=%lu\r\n",
+             modeName(s.mode), s.appliedL, s.appliedR, s.heading, cogTok, s.setpoint,
+             s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "", s.gpsAcc, ancTok,
              s.linkOk ? "OK" : "LOST",
-             s.bypassManual ? "  BYPASS=MANUAL" : "");
+             s.bypassManual ? "  BYPASS=MANUAL" : "",
+             (unsigned long)s.dropouts);
     Serial.print(line);
     SerialBT.print(line);
   }
@@ -154,6 +174,10 @@ void setup() {
                          prefs.getFloat("magScZ", MAG_SCALE[2]) };
       ahrs.setMagCal(off, scale);
       Serial.println("Mag cal: loaded from NVS (cal compass).");
+    }
+    if (prefs.isKey("hdgOff")) {
+      ahrs.setHeadingOffset(prefs.getFloat("hdgOff", 0.0f));
+      Serial.printf("Heading offset: %.0f deg (from NVS).\r\n", ahrs.headingOffset());
     }
     Serial.println("Heading estimator ready.");
   } else {
@@ -452,13 +476,20 @@ void applyTuningLine(char* buf, uint8_t len) {
     else if (!strcmp(cmd, "mxr")) driver.maxR = val;        // right output cap
     else if (!strcmp(cmd, "slew")) thrustSlew = val;        // accel limit (ramp up)
     else if (!strcmp(cmd, "slewdn")) thrustDecel = val;     // decel limit (ramp down to stop)
+    else if (!strcmp(cmd, "ancdb")) ancDeadband = val;      // anchor hold radius (m)
+    else if (!strcmp(cmd, "ancacc")) ancAccMax = val;       // max GPS accuracy (m) to capture/chase
+    else if (!strcmp(cmd, "pkp")) { posKp = val; distancePID.setGains(posKp, POS_KI, posKd); } // dist P
+    else if (!strcmp(cmd, "pkd")) { posKd = val; distancePID.setGains(posKp, POS_KI, posKd); } // dist D
+    else if (!strcmp(cmd, "hoff")) { ahrs.setHeadingOffset(val); prefs.putFloat("hdgOff", val); } // compass->true-N trim, saved
     headingPID.setGains(hdgKp, HDG_KI, hdgKd);
-    char reply[220];
+    char reply[280];
     snprintf(reply, sizeof(reply),
-             ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f  log=%dHz\r\n",
+             ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f"
+             "  hoff=%.0f ancdb=%.1f ancacc=%.1f pkp=%.3f pkd=%.3f  log=%dHz\r\n",
              hdgKp, hdgKd, hdgDeadband, autotune.amp,
              driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
-             driver.maxL, driver.maxR, thrustSlew, thrustDecel, logHz);
+             driver.maxL, driver.maxR, thrustSlew, thrustDecel,
+             ahrs.headingOffset(), ancDeadband, ancAccMax, posKp, posKd, logHz);
     Serial.print(reply);
     SerialBT.print(reply);
   }
@@ -536,6 +567,22 @@ void loop() {
     lastHHms = nowMs;
   }
 
+  // Anchor capture: on entering an anchor mode, arm capture; then latch the
+  // anchor at the first available GPS fix. Leaving anchor clears it.
+  static Mode prevAnchorMode = Mode::BOOT;
+  bool inAnchor  = (sm.mode() == Mode::ANCHOR || sm.mode() == Mode::ANCHOR_HEADING);
+  bool wasAnchor = (prevAnchorMode == Mode::ANCHOR || prevAnchorMode == Mode::ANCHOR_HEADING);
+  if (inAnchor && !wasAnchor) {                    // fresh engage
+    anchorSet = false;
+    anchorHeading = imuOk ? ahrs.deg() : 0.0f;
+    headingPID.reset(); distancePID.reset();
+  }
+  if (inAnchor && !anchorSet && gps.hasFix() && gps.accM() <= ancAccMax) {  // latch at first GOOD fix
+    anchorLat = gps.lat(); anchorLon = gps.lon(); anchorSet = true;
+  }
+  if (!inAnchor) anchorSet = false;
+  prevAnchorMode = sm.mode();
+
   // Auto-tune is only valid while actively holding heading; bail otherwise.
   if (autotune.active && sm.mode() != Mode::HEADING_HOLD) autotune.abort("left HEADING_HOLD");
 
@@ -567,8 +614,30 @@ void loop() {
 
     case Mode::ANCHOR:
     case Mode::ANCHOR_HEADING:
-      // TODO Phases 5-6: GPS position hold. Inert until GPS is mounted.
-      tgtL = 0; tgtR = 0;
+      if (anchorSet && gps.hasFix() && imuOk && gps.accM() <= ancAccMax) {
+        double d   = TinyGPSPlus::distanceBetween(gps.lat(), gps.lon(), anchorLat, anchorLon);
+        double brg = TinyGPSPlus::courseTo(gps.lat(), gps.lon(), anchorLat, anchorLon); // bearing home
+        anchorDist = (float)d; anchorBrg = (float)brg;
+        if (d < ancDeadband) {
+          // At anchor. ANCHOR_HEADING also holds the heading captured on engage.
+          if (sm.mode() == Mode::ANCHOR_HEADING) {
+            float e = headingError(anchorHeading, ahrs.deg());
+            float w = (fabsf(e) < hdgDeadband) ? 0.0f : HEADING_TURN_SIGN * headingPID.update(e, dt);
+            mix(0.0f, w, tgtL, tgtR);
+          } else { tgtL = 0; tgtR = 0; headingPID.reset(); distancePID.reset(); }
+        } else {
+          // Turn toward bearing-home; drive forward scaled by alignment (cos),
+          // so it arcs in and never powers away. HAL caps (mxl/mxr) limit speed.
+          float herr  = headingError((float)brg, ahrs.deg());
+          float w     = HEADING_TURN_SIGN * headingPID.update(herr, dt);
+          float fwd   = constrain(distancePID.update((float)d, dt), 0.0f, 1.0f);
+          float align = cosf(herr * 0.01745329f);
+          float v     = (align > 0.0f) ? fwd * align : 0.0f;  // no forward when facing away
+          mix(v, w, tgtL, tgtR);
+        }
+      } else {
+        tgtL = 0; tgtR = 0;   // no fix / no anchor / no IMU -> inert (safe)
+      }
       break;
 
     case Mode::BOOT:
@@ -611,6 +680,10 @@ void loop() {
   snap.setpoint = headingSetpoint;
   snap.dropouts = hhDropouts;
   snap.gpsFix = gps.hasFix(); snap.gpsSats = gps.sats(); snap.gpsHdop = gps.hdop();
+  snap.gpsAcc = gps.accM();
   snap.gpsLat = gps.lat(); snap.gpsLon = gps.lon();
+  snap.anchorOn = inAnchor; snap.anchorSet = anchorSet;
+  snap.anchorDist = anchorDist; snap.anchorBrg = anchorBrg;
+  snap.gpsCog = gps.course();
   portEXIT_CRITICAL(&snapMux);
 }

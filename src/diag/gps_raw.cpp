@@ -18,7 +18,7 @@
 #include <TinyGPSPlus.h>
 #include "config.h"
 
-static const uint32_t GPS_BAUD = 9600;   // NEO-8M factory default
+static const uint32_t GPS_BAUD = 38400;  // set by tools/gps_config.py (9600 if factory-reset)
 
 TinyGPSPlus    gps;
 BluetoothSerial SerialBT;                 // mirror so you can roam off-USB for sky view

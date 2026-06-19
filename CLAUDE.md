@@ -33,11 +33,14 @@ is the source of truth for pins and tunables.
   - **No barometer** on this module. Ignore any BMP180 references.
   - Driver quirks handled in `estimation/IMU.cpp`: L3G4200D needs 0x80 auto-increment bit;
     DLHC mag is X-Z-Y order, big-endian, no auto-increment.
-- GPS: **u-blox NEO-8M** on UART2 (RX=GPIO16<-GPS TX, TX=GPIO17->GPS RX), 9600 baud, powered
-  from the ESP32 **3V3** rail (NOT the 2S pack — the module LDO maxes ~6V). Confirmed fix on the
-  bench (7 sats, HDOP 1.4). `TinyGPSPlus` parses it (`hal/GPS.*`). A USB-UART adapter is on hand
-  to reconfigure the module in u-center later (e.g. raise update rate / baud, then save to NVM);
-  if its baud is changed, update `GPS_BAUD` in `hal/GPS.cpp` and `diag/gps_raw.cpp`.
+- GPS: **u-blox NEO-8M** on UART2 (RX=GPIO16<-GPS TX, TX=GPIO17->GPS RX), powered from the ESP32
+  **3V3** rail (NOT the 2S pack — the module LDO maxes ~6V). `TinyGPSPlus` parses it (`hal/GPS.*`).
+  **Configured + saved to flash** via `tools/gps_config.py` (UBX over the CP210x USB-UART): **38400
+  baud, 5 Hz, Pedestrian dynamic model, SBAS/WAAS on, GST enabled** (per-axis position sigma ->
+  `GPS::accM()` horizontal accuracy in metres, used to gate anchor capture/chase). `GPS_BAUD` in
+  `hal/GPS.cpp` + `diag/gps_raw.cpp` is 38400 to match; if you factory-reset the module it reverts
+  to 9600 (re-run the tool). Switch dynModel to **Sea (5)** for the kayak. Guadalajara is ~1500 m,
+  so the Sea model still works (it only constrains vertical dynamics).
 
 ## Pin map
 Authoritative copy is in `include/config.h`. Key points:
@@ -72,8 +75,9 @@ Type + Enter; each value command echoes the whole set. Highlights:
 **Persisted in NVS:** heading gains (from `tune`) and mag cal (from `cal compass`). Everything
 else is RAM-only until baked into `config.h`.
 
-Telemetry line: `L=cmd>applied R=cmd>applied` (left of `>` = controller command, right = post
-drive-shaping value the motor gets); `drop=` masked HEADING_HOLD glitches; `gps=<sats>s/<hdop> FIX`.
+Telemetry line: `L=`/`R=` are the post-drive-shaping values the motors actually get (mode name at
+the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
+`gps=<sats>s/<hdop> FIX`; `cog=` GPS course (while moving); `anc=<dist>m@<brg>` in anchor modes.
 (`batt=` removed until divider wired.)
 
 ## Current state (as of this handoff)

@@ -22,6 +22,9 @@
 //    kickms <v>  breakaway kick duration (ms)
 //    mxl <v>     left  output cap           mxr <v>    right output cap
 //                 (caps apply in autonomous modes only; MANUAL = full)
+//    ancdb <m>   anchor hold radius (m)   ancacc <m>  max GPS accuracy to chase
+//    pkp <v>     distance-PID P gain (anchor return)   pkd <v>  D gain
+//    hoff <deg>  compass->true-north heading trim (for ANCHOR; saved to NVS)
 //    log <v>     telemetry rate Hz (0 = mute)
 //
 //  WORD COMMANDS:
@@ -128,7 +131,7 @@ constexpr float BATT_CRITICAL_V    = 0.0f;
 // ---------------------------------------------------------------------
 //  Output shaping
 // ---------------------------------------------------------------------
-constexpr float THRUST_SLEW_PER_S  = 1.0f;   // accel limit, units/sec (ramp UP) - live "slew"
+constexpr float THRUST_SLEW_PER_S  = 0.5f;   // accel limit, units/sec (ramp UP) - live "slew"
 constexpr float THRUST_DECEL_PER_S = 20.0f;  // decel limit, units/sec (ramp DOWN to stop) - live "slewdn"
 
 // ---------------------------------------------------------------------
@@ -170,7 +173,7 @@ constexpr float MOTOR_MAX_R = 0.70f;    // right max duty
 //  Re-run diag_calib and update these if the IMU is remounted or the
 //  board's nearby metal changes (e.g. final kayak install).
 // ---------------------------------------------------------------------
-constexpr float MAG_OFF[3]   = {-509.5, 68.5f, -0.5f};  // hard-iron center
+constexpr float MAG_OFF[3]   = {-509.5,  68.5f,  -0.5f};  // hard-iron center
 constexpr float MAG_SCALE[3] = {0.827f, 0.855f, 1.607f}; // soft-iron scale
 
 // ---------------------------------------------------------------------
@@ -194,6 +197,21 @@ constexpr uint32_t HEADING_REGRAB_MS = 750;
   constexpr float HDG_KP = 0.015f, HDG_KI = 0.0f,   HDG_KD = 0.004f;
   constexpr float POS_KP = 0.30f,  POS_KI = 0.02f,  POS_KD = 0.0f;
 #else // PLATFORM_MULE
-  constexpr float HDG_KP = 0.0003f, HDG_KI = 0.0f,   HDG_KD = 0.0001f;
-  constexpr float POS_KP = 0.50f,  POS_KI = 0.0f,   POS_KD = 0.0f;
+  constexpr float HDG_KP = 0.0006f, HDG_KI = 0.0f, HDG_KD = 0.0007f;
+  // POS gain acts on RANGE IN METERS: at this kp, forward saturates ~1/kp metres
+  // out (0.30 => full-forward when >~3 m away). Live-tunable: "pkp"/"pkd".
+  constexpr float POS_KP = 0.40f,   POS_KI = 0.0f, POS_KD = 0.0f;
 #endif
+
+// ---------------------------------------------------------------------
+//  Smart Anchor / position-hold (Phase 5). On engaging ANCHOR we capture
+//  the current lat/lon; while outside the deadband the rover turns to the
+//  bearing-home (heading loop) and drives forward (distancePID on range),
+//  scaled by cos(heading error) so it arcs in and never powers away from
+//  home. Forward thrust is capped by the HAL output caps (MOTOR_MAX_L/R) in
+//  autonomous modes — no separate anchor cap. Live-tunable: "ancdb <m>".
+// ---------------------------------------------------------------------
+constexpr float ANCHOR_DEADBAND_M = 2.0f;  // inside this radius => hold (GPS noise floor)
+// Only capture/chase the anchor while horizontal accuracy (GST) is at least
+// this good — keeps us from latching or chasing a noisy fix. Live: "ancacc".
+constexpr float ANCHOR_ACC_MAX_M  = 3.0f;  // require accM <= this (metres)
