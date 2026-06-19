@@ -5,6 +5,39 @@
 //  Motor PWM lives on GPIO25/26 (clean, non-strapping) so the same two
 //  pins serve the L298N enables now and the ESC signals later.
 // =====================================================================
+//
+// =====================================================================
+//  CONSOLE REFERENCE  (USB or Bluetooth SmartKayak-*; type + Enter, CRLF)
+// ---------------------------------------------------------------------
+//  TUNABLE VALUES  ("<cmd> <value>"; each entry echoes the full set):
+//    kp <v>      heading P gain
+//    kd <v>      heading D gain
+//    db <v>      heading deadband (deg) - the "calming" knob
+//    amp <v>     relay amplitude used by `cal`/auto-tune
+//    slew <v>    accel limit (ramp up, units/sec) - lower = gentler launch
+//    slewdn <v>  decel limit (ramp down to stop, units/sec) - keep high
+//    kickl <v>   left  breakaway floor      kickr <v>  right breakaway floor
+//    runl  <v>   left  sustain  floor       runr  <v>  right sustain  floor
+//                 (mnl/mnr are aliases for runl/runr)
+//    kickms <v>  breakaway kick duration (ms)
+//    mxl <v>     left  output cap           mxr <v>    right output cap
+//                 (caps apply in autonomous modes only; MANUAL = full)
+//    log <v>     telemetry rate Hz (0 = mute)
+//
+//  WORD COMMANDS:
+//    tune        start relay heading auto-tune (HEADING_HOLD + IMU only)
+//    stop        abort tune / drive-cal; FINISH+save compass cal
+//    clrgains    forget NVS heading gains, revert to config defaults
+//
+//  CALIBRATION ROUTINES:
+//    cal kick l|r|both   push at KICK from standstill (0.7 s)
+//    cal run  l|r|both   kick to start, then hold RUN (0.7 s)
+//    cal max             both ramp to full at slew, hold full 2 s (find spin)
+//    cal compass         motors off; spin by hand -> saves mag hard/soft iron
+//
+//  PERSISTED IN NVS: heading gains (from `tune`) and mag cal (from
+//  `cal compass`). Everything else is RAM-only until baked into this file.
+// =====================================================================
 
 // ---------------------------------------------------------------------
 //  Platform sanity check (set by platformio.ini build flags)
@@ -95,7 +128,8 @@ constexpr float BATT_CRITICAL_V    = 0.0f;
 // ---------------------------------------------------------------------
 //  Output shaping
 // ---------------------------------------------------------------------
-constexpr float THRUST_SLEW_PER_S  = 4.0f;  // max change in thrust units/sec (smoothness)
+constexpr float THRUST_SLEW_PER_S  = 1.0f;   // accel limit, units/sec (ramp UP) - live "slew"
+constexpr float THRUST_DECEL_PER_S = 20.0f;  // decel limit, units/sec (ramp DOWN to stop) - live "slewdn"
 
 // ---------------------------------------------------------------------
 //  Motor direction trim. Flip a flag if a POSITIVE command spins that
@@ -107,16 +141,28 @@ constexpr float THRUST_SLEW_PER_S  = 4.0f;  // max change in thrust units/sec (s
 constexpr bool MOTOR_L_INVERT = true;
 constexpr bool MOTOR_R_INVERT = true;
 
-// Minimum drive: smallest output magnitude that actually turns the motor.
-// Below it the motor only whines. Commands are remapped so 0 stays 0 (off)
-// and any non-zero command scales into [minDrive, 1]. Tune each side to just
-// above where its wheel starts to spin. (Kayak thrusters get their own values.)
+// Two-tier minimum drive (per side). Brushed gearmotors have static friction
+// HIGHER than kinetic, so a stopped motor needs a brief "breakaway kick" to
+// start, then a lower "run" floor sustains it. Commands remap so 0 stays 0 and
+// any non-zero command scales into [floor, 1], where floor = KICK for the first
+// KICK_MS after breakaway, then RUN. Brushed motors rarely match -> per side.
 //
-// Per-side — brushed motors rarely match. If one side fails to break loose at
-// the start of a move, raise that side. Live-tunable over the console:
-// "mnl <v>" (left) / "mnr <v>" (right). Bake the winners here.
-constexpr float MOTOR_MIN_DRIVE_L = 0.45f;
-constexpr float MOTOR_MIN_DRIVE_R = 0.42f;
+// Calibrate live (no reflash):
+//   set values: "kickl/kickr <v>", "runl/runr <v>", "kickms <v>"
+//   test:       "cal kick l|r|both"  -> push at KICK from standstill (0.7 s)
+//               "cal run  l|r|both"  -> kick to start, then hold RUN (0.7 s)
+//               "cal max"            -> both ramp to full at slew, hold full 2 s
+// Bake the winners here. (mnl/mnr remain aliases for runl/runr.)
+constexpr float MOTOR_KICK_L = 0.40f;   // left  breakaway floor (static friction)
+constexpr float MOTOR_KICK_R = 0.42f;   // right breakaway floor
+constexpr float MOTOR_RUN_L  = 0.20f;   // left  sustain floor (kinetic)
+constexpr float MOTOR_RUN_R  = 0.22f;   // right sustain floor
+constexpr uint32_t MOTOR_KICK_MS = 50; // how long the breakaway kick holds
+
+// Per-side output cap: a full command maps to this, not 1.0, so commands scale
+// into [floor, max]. Tames over-aggressive correction. Live: "mxl"/"mxr <v>".
+constexpr float MOTOR_MAX_L = 1.00f;    // left  max duty
+constexpr float MOTOR_MAX_R = 1.00f;    // right max duty
 
 // ---------------------------------------------------------------------
 //  Magnetometer calibration (from a diag_calib tumble on this board).
@@ -124,8 +170,8 @@ constexpr float MOTOR_MIN_DRIVE_R = 0.42f;
 //  Re-run diag_calib and update these if the IMU is remounted or the
 //  board's nearby metal changes (e.g. final kayak install).
 // ---------------------------------------------------------------------
-constexpr float MAG_OFF[3]   = {-384.5f, 43.5f, -0.5f};  // hard-iron center
-constexpr float MAG_SCALE[3] = {0.847f, 0.969f, 1.269f}; // soft-iron scale
+constexpr float MAG_OFF[3]   = {-509.5, 68.5f, -0.5f};  // hard-iron center
+constexpr float MAG_SCALE[3] = {0.827f, 0.855f, 1.607f}; // soft-iron scale
 
 // ---------------------------------------------------------------------
 //  Heading fusion (complementary filter: gyro-Z + magnetic compass).
@@ -134,6 +180,11 @@ constexpr float GYRO_YAW_SIGN      = +1.0f; // flip to -1 if fused heading runs 
 constexpr float HEADING_FUSE_ALPHA = 0.98f; // gyro trust per step (higher = smoother, slower mag pull)
 constexpr float HEADING_TURN_SIGN  = +1.0f; // flip to -1 if HEADING_HOLD turns AWAY from the setpoint
 constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn) - stops setpoint hunting
+// Grace window: if HEADING_HOLD drops out for less than this, keep the existing
+// setpoint instead of re-grabbing the current heading. Masks brief input
+// glitches (floating bypass pin / RC flicker) that would otherwise bounce the
+// state machine and move the setpoint with no operator input.
+constexpr uint32_t HEADING_REGRAB_MS = 750;
 
 // ---------------------------------------------------------------------
 //  Control gains -- placeholders. Tune on the mule, RE-TUNE on the water.

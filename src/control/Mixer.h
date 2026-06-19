@@ -18,3 +18,14 @@ inline float slew(float target, float current, float maxStep) {
   if (d < -maxStep) d = -maxStep;
   return current + d;
 }
+
+// Asymmetric slew: limit the ramp UP (accelerating, |target| > |current|) by
+// accelStep, but allow a faster ramp DOWN (decelerating toward zero) by
+// decelStep. Lets a gentle launch coexist with a quick stop. Call each tick.
+inline float slewAsym(float target, float current, float accelStep, float decelStep) {
+  float maxStep = (fabsf(target) < fabsf(current)) ? decelStep : accelStep;
+  float d = target - current;
+  if (d >  maxStep) d =  maxStep;
+  if (d < -maxStep) d = -maxStep;
+  return current + d;
+}

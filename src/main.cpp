@@ -55,8 +55,18 @@ float       headingSetpoint = 0;   // captured on entering HEADING_HOLD
 //   "kp 0.01"  "kd 0.004"  "db 5"   then Enter.
 float hdgKp = HDG_KP, hdgKd = HDG_KD, hdgDeadband = HEADING_DEADBAND_DEG;
 
+// Asymmetric ramp limits (thrust units/sec), live-tunable. "slew" caps accel
+// (ramp up) for less wheelspin; "slewdn" caps decel (ramp down) - keep it high
+// so the rover stops promptly even when slew is low.
+float thrustSlew  = THRUST_SLEW_PER_S;
+float thrustDecel = THRUST_DECEL_PER_S;
+
 // Telemetry print rate (Hz), live-adjustable: "log 0" mutes, "log 5" = 5 Hz.
 volatile int logHz = TELEMETRY_HZ;
+
+// Count of brief HEADING_HOLD drop-outs masked by the regrab grace window —
+// a nonzero, climbing value means an input (bypass pin / RC) is glitching.
+volatile uint32_t hhDropouts = 0;
 
 // Shared snapshot for the telemetry task (core 0). Guarded by a spinlock.
 struct Snapshot {
@@ -68,6 +78,7 @@ struct Snapshot {
   int   modeSel = 0;
   float heading = 0, setpoint = 0;
   float appliedL = 0, appliedR = 0;   // post min-drive (what the motor gets)
+  uint32_t dropouts = 0;              // masked HEADING_HOLD glitch count
 } snap;
 portMUX_TYPE snapMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -86,9 +97,9 @@ void telemetryTask(void*) {
     portENTER_CRITICAL(&snapMux); s = snap; portEXIT_CRITICAL(&snapMux);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f sp=%5.1f  arm=%d modeSel=%d  link=%s%s\r\n",
+             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f sp=%5.1f  arm=%d modeSel=%d  drop=%lu  link=%s%s\r\n",
              modeName(s.mode), s.left, s.appliedL, s.right, s.appliedR, s.heading, s.setpoint,
-             (int)s.armReq, s.modeSel,
+             (int)s.armReq, s.modeSel, (unsigned long)s.dropouts,
              s.linkOk ? "OK" : "LOST",
              s.bypassManual ? "  BYPASS=MANUAL" : "");
     Serial.print(line);
@@ -125,6 +136,17 @@ void setup() {
   if (imuOk) {
     Serial.println("IMU OK - calibrating gyro bias, hold still...");
     ahrs.begin(&imu);
+    // Restore mag hard/soft-iron cal from NVS (from `cal compass`), if present.
+    if (prefs.isKey("magOffX")) {
+      float off[3]   = { prefs.getFloat("magOffX", MAG_OFF[0]),
+                         prefs.getFloat("magOffY", MAG_OFF[1]),
+                         prefs.getFloat("magOffZ", MAG_OFF[2]) };
+      float scale[3] = { prefs.getFloat("magScX", MAG_SCALE[0]),
+                         prefs.getFloat("magScY", MAG_SCALE[1]),
+                         prefs.getFloat("magScZ", MAG_SCALE[2]) };
+      ahrs.setMagCal(off, scale);
+      Serial.println("Mag cal: loaded from NVS (cal compass).");
+    }
     Serial.println("Heading estimator ready.");
   } else {
     Serial.println("IMU not found - HEADING_HOLD will be inert.");
@@ -232,13 +254,172 @@ struct AutoTune {
 };
 AutoTune autotune;
 
-// Live heading tuning over serial OR Bluetooth: "kp <v>", "kd <v>", "db <v>" + Enter.
-// Word-only commands: "tune" (start auto-tune), "stop" (abort auto-tune).
+// =====================================================================
+//  Drive-floor calibration. Pushes a motor (or both) at an EXACT duty so
+//  the breakaway (KICK) and sustain (RUN) floors can be found by eye:
+//    cal kick l|r|both -> hold KICK for 0.7 s (does it start from rest?)
+//    cal run  l|r|both -> KICK for kickMs, then RUN (does it keep going?)
+//    cal max           -> both motors ramp 0->max over 1 s, hold max 2 s
+//  kick/run probe exact floors via setRaw(); max runs the full setThrust path
+//  (kick + cap). Auto-stops, "stop" aborts. Motors move regardless of arm.
+// =====================================================================
+struct DriveCal {
+  bool active = false, doL = false, doR = false, runTest = false, maxTest = false;
+  uint32_t startMs = 0;
+  int  savedLog = TELEMETRY_HZ;
+  // cal max ramp state
+  float    maxCmd = 0;
+  bool     atMax = false;
+  uint32_t holdStartMs = 0;
+
+  void echo(const char* s) { Serial.print(s); SerialBT.print(s); }
+
+  void start(bool l, bool r, bool runMode) {
+    autotune.abort("cal started");
+    doL = l; doR = r; runTest = runMode; maxTest = false; active = true;
+    startMs = millis(); savedLog = logHz; logHz = 0;
+    char m[150];
+    snprintf(m, sizeof(m),
+      ">> CAL %s start [%s%s] 0.7s  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu. Keep area clear!\r\n",
+      runMode ? "RUN" : "KICK", l ? "L" : "", r ? "R" : "",
+      driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs);
+    echo(m);
+  }
+
+  void startMax() {
+    autotune.abort("cal started");
+    doL = doR = true; runTest = false; maxTest = true; active = true;
+    maxCmd = 0; atMax = false; holdStartMs = 0;
+    startMs = millis(); savedLog = logHz; logHz = 0;
+    char m[140];
+    snprintf(m, sizeof(m),
+      ">> CAL MAX start: ramp to full at slew=%.1f, then hold full 2s  maxL=%.2f maxR=%.2f. Keep area clear!\r\n",
+      thrustSlew, driver.maxL, driver.maxR);
+    echo(m);
+  }
+
+  void stop(const char* why) {
+    if (!active) return;
+    active = false; logHz = savedLog; driver.disable();
+    char m[48];
+    snprintf(m, sizeof(m), ">> CAL %s\r\n", why);
+    echo(m);
+  }
+
+  void step() {   // called each control tick while active; drives motors directly
+    if (!active) return;
+    uint32_t el = millis() - startMs;
+    if (maxTest) {
+      if (el >= 8000UL) { stop("safety timeout"); return; }   // guard against a stalled ramp
+      const float dt = 1.0f / CONTROL_HZ;
+      if (!atMax) {
+        maxCmd += thrustSlew * dt;                          // ramp at the tuned acceleration
+        if (maxCmd >= 1.0f) { maxCmd = 1.0f; atMax = true; holdStartMs = millis(); }
+      } else if (millis() - holdStartMs >= 2000UL) {
+        stop("done"); return;                              // held full for 2 s
+      }
+      driver.capActive = true;                             // exercise the cap regardless of mode
+      driver.setThrust(maxCmd, maxCmd);                    // full path: kick + scale into [floor, max]
+      return;
+    }
+    if (el >= 700UL) { stop("done"); return; }
+    float dl = 0, dr = 0;
+    if (doL) dl = (!runTest || el < driver.kickMs) ? driver.kickL : driver.runL;
+    if (doR) dr = (!runTest || el < driver.kickMs) ? driver.kickR : driver.runR;
+    driver.setRaw(dl, dr);
+  }
+};
+DriveCal drivecal;
+
+// =====================================================================
+//  Compass (magnetometer) calibration. While active, motors are held off
+//  and you spin the rover by hand through full turns (tilt too if you can).
+//  It tracks per-axis raw min/max, prints them live, and on "stop" derives
+//  hard-iron offset = (max+min)/2 and soft-iron scale = avgRange/range,
+//  applies them live (ahrs.setMagCal) and saves to NVS. Gyro-Z bias is
+//  measured automatically at boot (hold still), so it's not part of this.
+// =====================================================================
+struct CompassCal {
+  bool active = false;
+  int16_t mn[3], mx[3];
+  uint32_t startMs = 0, lastPrint = 0;
+  int  savedLog = TELEMETRY_HZ;
+
+  void echo(const char* s) { Serial.print(s); SerialBT.print(s); }
+
+  void start() {
+    if (!imuOk) { echo(">> compass cal: no IMU, cannot calibrate.\r\n"); return; }
+    autotune.abort("cal started"); drivecal.stop("cal started");
+    active = true; startMs = lastPrint = millis(); savedLog = logHz; logHz = 0;
+    imu.readMag();
+    for (int i = 0; i < 3; ++i) { mn[i] = mx[i] = imu.mRaw[i]; }
+    echo(">> COMPASS CAL: motors OFF. Spin the rover SLOWLY through several full\r\n"
+         ">> turns (tilt/roll too if you can). Watch the ranges grow; type 'stop'\r\n"
+         ">> when they quit changing.\r\n");
+  }
+
+  void step() {
+    if (!active) return;
+    imu.readMag();
+    for (int i = 0; i < 3; ++i) {
+      if (imu.mRaw[i] < mn[i]) mn[i] = imu.mRaw[i];
+      if (imu.mRaw[i] > mx[i]) mx[i] = imu.mRaw[i];
+    }
+    uint32_t now = millis();
+    if (now - lastPrint >= 300) {
+      lastPrint = now;
+      char m[120];
+      snprintf(m, sizeof(m), "   X[%6d..%6d] Y[%6d..%6d] Z[%6d..%6d]\r\n",
+               mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]);
+      echo(m);
+    }
+    if (now - startMs > 120000UL) finish("timeout");   // 2 min safety
+  }
+
+  void finish(const char* why) {
+    if (!active) return;
+    active = false; logHz = savedLog;
+    float off[3], scale[3], range[3];
+    for (int i = 0; i < 3; ++i) { off[i] = 0.5f * (mx[i] + mn[i]); range[i] = 0.5f * (mx[i] - mn[i]); }
+    float avg = (range[0] + range[1] + range[2]) / 3.0f;
+    for (int i = 0; i < 3; ++i) scale[i] = (range[i] > 1.0f) ? (avg / range[i]) : 1.0f;
+    ahrs.setMagCal(off, scale);
+    prefs.putFloat("magOffX", off[0]);   prefs.putFloat("magOffY", off[1]);   prefs.putFloat("magOffZ", off[2]);
+    prefs.putFloat("magScX", scale[0]);  prefs.putFloat("magScY", scale[1]);  prefs.putFloat("magScZ", scale[2]);
+    char m[280];
+    snprintf(m, sizeof(m),
+      ">> COMPASS CAL %s. Applied + saved to NVS. Paste into config.h to bake:\r\n"
+      ">> constexpr float MAG_OFF[3]   = {%.1f, %.1f, %.1f};\r\n"
+      ">> constexpr float MAG_SCALE[3] = {%.3f, %.3f, %.3f};\r\n",
+      why, off[0], off[1], off[2], scale[0], scale[1], scale[2]);
+    echo(m);
+  }
+};
+CompassCal compasscal;
+
+// Live tuning over serial OR Bluetooth (type + Enter). Word commands:
+//   tune / stop / clrgains, cal kick|run l|r|both. Value commands: see below.
 void applyTuningLine(char* buf, uint8_t len) {
   if (len == 0) return;
   buf[len] = 0;
   if (!strncmp(buf, "tune", 4)) { autotune.start();        return; }
-  if (!strncmp(buf, "stop", 4)) { autotune.abort("user stop"); return; }
+  if (!strncmp(buf, "stop", 4)) { autotune.abort("user stop"); drivecal.stop("aborted"); compasscal.finish("stopped"); return; }
+  if (!strncmp(buf, "cal", 3)) {
+    char a[8], b[8], c[8] = "";
+    int n = sscanf(buf, "%7s %7s %7s", a, b, c);   // "cal" "kick"|"run"|"max"|"compass" ["l"|"r"|"both"]
+    if (n >= 2 && !strcmp(b, "compass")) { compasscal.start(); return; }
+    if (n >= 2 && !strcmp(b, "max")) { drivecal.startMax(); return; }
+    bool runMode = (n >= 2 && !strcmp(b, "run"));
+    bool kickMode = (n >= 2 && !strcmp(b, "kick"));
+    if (!runMode && !kickMode) {
+      const char* u = ">> usage: cal kick|run [l|r|both]  |  cal max  |  cal compass\r\n";
+      Serial.print(u); SerialBT.print(u); return;
+    }
+    bool l = true, r = true;                        // no side given -> both
+    if (n >= 3) { l = (!strcmp(c, "l") || !strcmp(c, "both")); r = (!strcmp(c, "r") || !strcmp(c, "both")); }
+    drivecal.start(l, r, runMode);
+    return;
+  }
   if (!strncmp(buf, "clrgains", 8)) {   // forget auto-tuned gains, revert to config
     prefs.remove("hdgKp"); prefs.remove("hdgKd");
     hdgKp = HDG_KP; hdgKd = HDG_KD; headingPID.setGains(hdgKp, HDG_KI, hdgKd);
@@ -254,13 +435,22 @@ void applyTuningLine(char* buf, uint8_t len) {
     else if (!strcmp(cmd, "db")) hdgDeadband = val;
     else if (!strcmp(cmd, "amp")) autotune.amp = val;        // relay magnitude for auto-tune
     else if (!strcmp(cmd, "log")) logHz = (int)val;          // telemetry rate Hz (0 = mute)
-    else if (!strcmp(cmd, "mnl")) driver.minDriveL = val;    // left  motor min drive trim
-    else if (!strcmp(cmd, "mnr")) driver.minDriveR = val;    // right motor min drive trim
+    else if (!strcmp(cmd, "kickl")) driver.kickL = val;      // left  breakaway floor
+    else if (!strcmp(cmd, "kickr")) driver.kickR = val;      // right breakaway floor
+    else if (!strcmp(cmd, "runl") || !strcmp(cmd, "mnl")) driver.runL = val;  // left  sustain (mnl alias)
+    else if (!strcmp(cmd, "runr") || !strcmp(cmd, "mnr")) driver.runR = val;  // right sustain (mnr alias)
+    else if (!strcmp(cmd, "kickms")) driver.kickMs = (uint32_t)val;           // kick duration
+    else if (!strcmp(cmd, "mxl")) driver.maxL = val;        // left  output cap
+    else if (!strcmp(cmd, "mxr")) driver.maxR = val;        // right output cap
+    else if (!strcmp(cmd, "slew")) thrustSlew = val;        // accel limit (ramp up)
+    else if (!strcmp(cmd, "slewdn")) thrustDecel = val;     // decel limit (ramp down to stop)
     headingPID.setGains(hdgKp, HDG_KI, hdgKd);
-    char reply[110];
+    char reply[220];
     snprintf(reply, sizeof(reply),
-             ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  mnL=%.2f mnR=%.2f  log=%dHz\r\n",
-             hdgKp, hdgKd, hdgDeadband, autotune.amp, driver.minDriveL, driver.minDriveR, logHz);
+             ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f  log=%dHz\r\n",
+             hdgKp, hdgKd, hdgDeadband, autotune.amp,
+             driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
+             driver.maxL, driver.maxR, thrustSlew, thrustDecel, logHz);
     Serial.print(reply);
     SerialBT.print(reply);
   }
@@ -319,15 +509,23 @@ void loop() {
   sm.update(in);
   if (sm.justReengaged()) { headingPID.reset(); distancePID.reset(); }
 
-  // Advance the heading estimate, and capture the setpoint when we first
-  // enter HEADING_HOLD (hold whatever direction the boat faces on engage).
+  // Advance the heading estimate, and capture the setpoint when we ENGAGE
+  // HEADING_HOLD. Re-grab only on a *fresh* engage: if HEADING_HOLD was
+  // interrupted only briefly (a glitch on the bypass/RC inputs bouncing the
+  // state machine), keep the existing setpoint so the lock doesn't wander.
   if (imuOk) ahrs.update(dt);
-  static Mode prevMode = Mode::BOOT;
-  if (sm.mode() == Mode::HEADING_HOLD && prevMode != Mode::HEADING_HOLD) {
-    headingSetpoint = ahrs.deg();
-    headingPID.reset();
+  static uint32_t lastHHms = 0;
+  uint32_t nowMs = millis();
+  if (sm.mode() == Mode::HEADING_HOLD) {
+    uint32_t gap = nowMs - lastHHms;
+    if (gap > HEADING_REGRAB_MS) {                // absent longer than the grace window => real engage
+      headingSetpoint = ahrs.deg();
+      headingPID.reset();
+    } else if (gap > 25) {                        // back within grace => a brief glitch we just masked
+      hhDropouts++;
+    }
+    lastHHms = nowMs;
   }
-  prevMode = sm.mode();
 
   // Auto-tune is only valid while actively holding heading; bail otherwise.
   if (autotune.active && sm.mode() != Mode::HEADING_HOLD) autotune.abort("left HEADING_HOLD");
@@ -372,15 +570,25 @@ void loop() {
       break;
   }
 
-  // ---- Output: slew-limit for smoothness, then drive ----
-  float step = THRUST_SLEW_PER_S * dt;
-  cmdL = slew(tgtL, cmdL, step);
-  cmdR = slew(tgtR, cmdR, step);
-
+  // ---- Output ----
   bool armed = (sm.mode() == Mode::MANUAL || sm.mode() == Mode::HEADING_HOLD ||
                 sm.mode() == Mode::ANCHOR || sm.mode() == Mode::ANCHOR_HEADING);
-  if (armed) driver.setThrust(cmdL, cmdR);
-  else       { driver.disable(); cmdL = cmdR = 0; }
+  if (compasscal.active) {
+    compasscal.step();           // manual-spin mag calibration: motors OFF for safety
+    driver.disable(); cmdL = cmdR = 0;
+  } else if (drivecal.active) {
+    drivecal.step();             // bench calibration drives motors directly via setRaw()
+    cmdL = cmdR = 0;             // hold slew state neutral so normal control resumes cleanly
+  } else {
+    // asymmetric slew: gentle accel, quick stop
+    float accStep = thrustSlew * dt, decStep = thrustDecel * dt;
+    cmdL = slewAsym(tgtL, cmdL, accStep, decStep);
+    cmdR = slewAsym(tgtR, cmdR, accStep, decStep);
+    if (armed) {
+      driver.capActive = (sm.mode() != Mode::MANUAL);   // cap autonomous modes only; MANUAL = full stick
+      driver.setThrust(cmdL, cmdR);
+    } else { driver.disable(); cmdL = cmdR = 0; }
+  }
 
   digitalWrite(PIN_STATUS_LED, armed ? HIGH : (millis() / 250) & 1); // solid=armed, blink=safe
 
@@ -392,5 +600,6 @@ void loop() {
   snap.armReq = in.armRequest; snap.modeSel = in.modeSelect;
   snap.heading = imuOk ? ahrs.deg() : 0.0f;
   snap.setpoint = headingSetpoint;
+  snap.dropouts = hhDropouts;
   portEXIT_CRITICAL(&snapMux);
 }

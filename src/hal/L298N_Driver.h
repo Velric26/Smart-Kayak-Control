@@ -8,6 +8,7 @@ class L298N_Driver : public MotorDriver {
 public:
   void begin() override;
   void setThrust(float left, float right) override;
+  void setRaw(float left, float right) override;
   void disable() override;
   const char* name() const override { return "L298N"; }
 private:

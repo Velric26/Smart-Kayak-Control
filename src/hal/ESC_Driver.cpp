@@ -21,18 +21,22 @@ void ESC_Driver::begin() {
   // gate motion behind the arming state in the state machine.
 }
 
-// Same min-drive remap as the L298N path (skips the thruster's dead zone).
-static float applyMinDrive(float v, float minDrive) {
-  if (fabsf(v) < 0.02f) return 0.0f;
-  float m = minDrive + (1.0f - minDrive) * fabsf(v);
-  return (v < 0.0f) ? -m : m;
-}
-
 void ESC_Driver::setThrust(float left, float right) {
   if (MOTOR_L_INVERT) left  = -left;
   if (MOTOR_R_INVERT) right = -right;
-  left  = applyMinDrive(left,  minDriveL);
-  right = applyMinDrive(right, minDriveR);
+  left  = shape(0, left);    // breakaway-kick -> sustain-run floor (shared in HAL base)
+  right = shape(1, right);
+  lastL = left; lastR = right;
+  escL_.writeMicroseconds(toMicros(left));
+  escR_.writeMicroseconds(toMicros(right));
+}
+
+// Exact duty, no min-drive shaping (calibration probe).
+void ESC_Driver::setRaw(float left, float right) {
+  if (MOTOR_L_INVERT) left  = -left;
+  if (MOTOR_R_INVERT) right = -right;
+  left  = constrain(left,  -1.0f, 1.0f);
+  right = constrain(right, -1.0f, 1.0f);
   lastL = left; lastR = right;
   escL_.writeMicroseconds(toMicros(left));
   escR_.writeMicroseconds(toMicros(right));
