@@ -19,6 +19,7 @@
 #include "hal/RCReceiver.h"
 #include "hal/BatteryMonitor.h"
 #include "hal/BypassSense.h"
+#include "hal/GPS.h"
 #include "control/Mixer.h"
 #include "control/PID.h"
 #include "statemachine/StateMachine.h"
@@ -41,6 +42,7 @@ RCReceiver     rc;
 BatteryMonitor battery;
 BypassSense    bypass;
 StateMachine   sm;
+GPS            gps;
 
 // Controllers (used from Phase 3+). Declared now so the structure is set.
 PID headingPID, distancePID;
@@ -79,6 +81,10 @@ struct Snapshot {
   float heading = 0, setpoint = 0;
   float appliedL = 0, appliedR = 0;   // post min-drive (what the motor gets)
   uint32_t dropouts = 0;              // masked HEADING_HOLD glitch count
+  bool   gpsFix = false;
+  int    gpsSats = 0;
+  float  gpsHdop = 99.9f;
+  double gpsLat = 0, gpsLon = 0;
 } snap;
 portMUX_TYPE snapMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -88,7 +94,7 @@ float cmdL = 0, cmdR = 0;   // slew-limited outputs (persist across ticks)
 //  Telemetry task (core 0) — serial for now; WiFi/BLE later (Phase 7).
 // ---------------------------------------------------------------------
 void telemetryTask(void*) {
-  char line[160];
+  char line[220];
   for (;;) {
     int hz = logHz;
     if (hz <= 0) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }  // muted
@@ -97,9 +103,10 @@ void telemetryTask(void*) {
     portENTER_CRITICAL(&snapMux); s = snap; portEXIT_CRITICAL(&snapMux);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f sp=%5.1f  arm=%d modeSel=%d  drop=%lu  link=%s%s\r\n",
+             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f sp=%5.1f  arm=%d modeSel=%d  drop=%lu  gps=%ds/%.1f%s  link=%s%s\r\n",
              modeName(s.mode), s.left, s.appliedL, s.right, s.appliedR, s.heading, s.setpoint,
              (int)s.armReq, s.modeSel, (unsigned long)s.dropouts,
+             s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "",
              s.linkOk ? "OK" : "LOST",
              s.bypassManual ? "  BYPASS=MANUAL" : "");
     Serial.print(line);
@@ -120,6 +127,7 @@ void setup() {
   battery.begin();
   bypass.begin();
   sm.begin();
+  gps.begin();
   pinMode(PIN_STATUS_LED, OUTPUT);
 
   // Restore auto-tuned heading gains from NVS (fall back to config defaults).
@@ -483,6 +491,7 @@ void loop() {
   handleSerialTuning();
 
   // ---- Sense ----
+  gps.update();   // drain GPS UART each tick
   static uint8_t battDiv = 0;
   if (++battDiv >= CONTROL_HZ / 10) { battery.update(); battDiv = 0; } // ~10 Hz
 
@@ -601,5 +610,7 @@ void loop() {
   snap.heading = imuOk ? ahrs.deg() : 0.0f;
   snap.setpoint = headingSetpoint;
   snap.dropouts = hhDropouts;
+  snap.gpsFix = gps.hasFix(); snap.gpsSats = gps.sats(); snap.gpsHdop = gps.hdop();
+  snap.gpsLat = gps.lat(); snap.gpsLon = gps.lon();
   portEXIT_CRITICAL(&snapMux);
 }

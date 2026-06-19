@@ -161,8 +161,8 @@ constexpr uint32_t MOTOR_KICK_MS = 50; // how long the breakaway kick holds
 
 // Per-side output cap: a full command maps to this, not 1.0, so commands scale
 // into [floor, max]. Tames over-aggressive correction. Live: "mxl"/"mxr <v>".
-constexpr float MOTOR_MAX_L = 1.00f;    // left  max duty
-constexpr float MOTOR_MAX_R = 1.00f;    // right max duty
+constexpr float MOTOR_MAX_L = 0.70f;    // left  max duty
+constexpr float MOTOR_MAX_R = 0.70f;    // right max duty
 
 // ---------------------------------------------------------------------
 //  Magnetometer calibration (from a diag_calib tumble on this board).
