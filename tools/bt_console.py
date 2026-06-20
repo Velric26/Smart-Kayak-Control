@@ -13,6 +13,10 @@ Interactive: type any rover command + Enter (kp/kd/db, mxl/mxr, runl/runr,
 hoff, cal max, cal compass, ...). Telemetry streams in the background.
 Local meta-commands (start with '/'):
   /max          shortcut for 'cal max' (motor straight-line trim run)
+  /trim         fire 'cal max' AND measure the heading drift across the run:
+                reports net rotation (compass) so you know which way it veered
+                and which 'mx' to nudge -- no eyeballing needed (but see the
+                EMI caveat: motor currents can nudge the mag at full power)
   /align        toggle hdg-vs-cog capture; prints the mean offset + a
                 suggested 'hoff <deg>' (drive STRAIGHT while it samples)
   /clear        reset the /align samples
@@ -53,6 +57,7 @@ HDG = re.compile(r"hdg=\s*([-\d.]+)")
 COG = re.compile(r"cog=\s*([-\d.]+)")
 
 _align = {"on": False, "samples": []}
+_trim = {"on": False, "hdg": []}
 _io_lock = threading.Lock()
 
 
@@ -70,8 +75,9 @@ def circ_mean(diffs):
 
 def on_line(line):
     print(line)
+    h = HDG.search(line)
     if _align["on"]:
-        h, c = HDG.search(line), COG.search(line)
+        c = COG.search(line)
         if h and c:                      # cog only present while moving
             off = wrap180(float(c.group(1)) - float(h.group(1)))
             _align["samples"].append(off)
@@ -79,6 +85,25 @@ def on_line(line):
                 m = circ_mean(_align["samples"])
                 print(f"   [align] n={len(_align['samples'])} "
                       f"mean(cog-hdg)={m:+.1f}  -> try 'hoff {round(m)}'")
+    if _trim["on"] and h:
+        _trim["hdg"].append(float(h.group(1)))
+
+
+def trim_finish():
+    _trim["on"] = False
+    s = _trim["hdg"]
+    if len(s) < 3:
+        print("   [trim] too few heading samples (rover powered? log rate up?)")
+        return
+    net = wrap180(s[-1] - s[0])          # signed net rotation over the run
+    if abs(net) < 2:
+        side = "STRAIGHT - well balanced"
+    elif net > 0:
+        side = f"veered RIGHT (+{net:.0f} deg) -> lower 'mxr' or raise 'mxl'"
+    else:
+        side = f"veered LEFT ({net:.0f} deg) -> lower 'mxl' or raise 'mxr'"
+    print(f"   [trim] net heading change {net:+.0f} deg over {len(s)} samples: {side}")
+    print("   [trim] (EMI caveat: confirm direction by eye if it looks odd)")
 
 
 def reader(ser, stop):
@@ -125,6 +150,11 @@ def main():
             if not cmd: continue
             if cmd in ("/q", "/quit"): break
             elif cmd == "/max": send(ser, "cal max")
+            elif cmd == "/trim":
+                _trim["hdg"].clear(); _trim["on"] = True
+                send(ser, "cal max")
+                print("   [trim] measuring heading drift across the run...")
+                threading.Timer(4.5, trim_finish).start()
             elif cmd == "/align":
                 _align["on"] = not _align["on"]
                 print(f"   [align] {'ON - drive straight' if _align['on'] else 'OFF'}")
