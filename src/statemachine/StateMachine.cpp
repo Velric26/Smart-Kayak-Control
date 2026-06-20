@@ -14,19 +14,8 @@ const char* modeName(Mode m) {
 }
 
 void StateMachine::update(const SMInputs& in) {
-  reengaged_ = false;
-
-  // ---- Highest precedence: hardware bypass (§7 level 0) -------------
-  // If the 3PDT hands control to the RC directly, the MCU stands down.
-  // Coming back from bypass requires a fresh arm (handled below) and
-  // flags a re-engage so controllers reset.
-  if (in.bypassManual) {
-    wasBypassed_ = true;
-    mode_ = Mode::DISARMED;
-    return;
-  }
-
   // ---- Safety override (§7 level 1) ---------------------------------
+  // (Level 0 hardware-bypass handling is deferred until the 3PDT is wired.)
   if (!in.rcLinkOk || in.batteryCritical) {
     mode_ = Mode::FAILSAFE;
     return;
@@ -47,7 +36,6 @@ void StateMachine::update(const SMInputs& in) {
       // Arm only with sticks centered (prevents arm-lurch).
       if (in.armRequest && in.sticksNeutral) {
         mode_ = Mode::MANUAL;
-        if (wasBypassed_) { reengaged_ = true; wasBypassed_ = false; }
       }
       break;
 

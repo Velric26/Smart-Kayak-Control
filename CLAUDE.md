@@ -49,7 +49,8 @@ Authoritative copy is in `include/config.h`. Key points:
 - L298N direction: IN1=27, IN2=14, IN3=18, IN4=19 (freed when swapping to ESC).
 - I2C: SDA=21, SCL=22. GPS UART2: RX=16, TX=17 (NEO-8M wired & live).
 - RC in: mixed-L=35, mixed-R=36 (VP), Ch5/ARM=39 (VN, latching), Ch6/MODE=4 (momentary).
-- Battery sense=34 (ADC1). 3PDT bypass sense=13 (reserved). Status LED=2.
+- Battery sense=34 (ADC1). 3PDT bypass sense=13 (RESERVED — bypass logic removed
+  from firmware; a floating pin glitched the state machine. Re-add when 3PDT wired). Status LED=2.
 
 ## Build & flash (PlatformIO)
 Run from the project root. `pio` is on PATH (`%USERPROFILE%\.platformio\penv\Scripts`).
@@ -102,7 +103,7 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
   NVS (auto-loaded at boot). `MAG_OFF/MAG_SCALE` are now runtime-overridable in `HeadingAHRS`.
 - **Heading-lock setpoint is glitch-stable:** re-grabbed only after a real disengage
   (`HEADING_REGRAB_MS` grace), so brief input glitches don't walk `sp`. `drop=` in telemetry
-  counts masked glitches (suspect the floating bypass pin GPIO13 / RC flicker if it climbs).
+  counts masked glitches; with bypass logic removed, a climbing `drop` now points at RC-link flicker.
 - **Phase 4 GPS bring-up DONE:** NEO-8M validated (`diag_gps`, 7 sats / HDOP 1.4) and integrated
   into the main firmware (`hal/GPS.*`); telemetry shows `gps=`. No motor behavior change yet.
 - **In progress / open:** (1) bake final tuned values into `config.h` (drive floors, caps, slew,

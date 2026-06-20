@@ -18,7 +18,6 @@
 #include "hal/MotorDriver.h"
 #include "hal/RCReceiver.h"
 #include "hal/BatteryMonitor.h"
-#include "hal/BypassSense.h"
 #include "hal/GPS.h"
 #include "control/Mixer.h"
 #include "control/PID.h"
@@ -50,7 +49,6 @@ inline void emit(const char* s) {
 
 RCReceiver     rc;
 BatteryMonitor battery;
-BypassSense    bypass;
 StateMachine   sm;
 GPS            gps;
 
@@ -87,7 +85,7 @@ float thrustDecel = THRUST_DECEL_PER_S;
 volatile int logHz = TELEMETRY_HZ;
 
 // Count of brief HEADING_HOLD drop-outs masked by the regrab grace window —
-// a nonzero, climbing value means an input (bypass pin / RC) is glitching.
+// a nonzero, climbing value means the RC link is glitching (FAILSAFE flicker).
 volatile uint32_t hhDropouts = 0;
 
 // Shared snapshot for the telemetry task (core 0). Guarded by a spinlock.
@@ -95,7 +93,7 @@ struct Snapshot {
   Mode  mode = Mode::BOOT;
   float left = 0, right = 0;
   float battV = 0;
-  bool  linkOk = false, bypassManual = false;
+  bool  linkOk = false;
   bool  armReq = false;
   int   modeSel = 0;
   float heading = 0, setpoint = 0;
@@ -133,11 +131,10 @@ void telemetryTask(void*) {
     if (s.gpsCog >= 0) snprintf(cogTok, sizeof(cogTok), " cog=%.0f", s.gpsCog);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             "[%-14s] L=%+.2f R=%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s%s  drop=%lu\r\n",
+             "[%-14s] L=%+.2f R=%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s  drop=%lu\r\n",
              modeName(s.mode), s.appliedL, s.appliedR, s.heading, cogTok, s.setpoint,
              s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "", s.gpsAcc, ancTok,
              s.linkOk ? "OK" : "LOST",
-             s.bypassManual ? "  BYPASS=MANUAL" : "",
              (unsigned long)s.dropouts);
     emit(line);
   }
@@ -155,7 +152,6 @@ void setup() {
 
   rc.begin();
   battery.begin();
-  bypass.begin();
   sm.begin();
   gps.begin();
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -535,13 +531,11 @@ void loop() {
   static uint8_t battDiv = 0;
   if (++battDiv >= CONTROL_HZ / 10) { battery.update(); battDiv = 0; } // ~10 Hz
 
-  bool linkOk       = rc.linkOk();
-  bool bypassManual = bypass.isManual();
+  bool linkOk = rc.linkOk();
 
   SMInputs in;
   in.rcLinkOk        = linkOk;
   in.batteryCritical = battery.critical();
-  in.bypassManual    = bypassManual;
   in.armRequest      = rc.norm(RC_ARM) > 0.5f;   // CH5 latching: held = armed
   in.sticksNeutral   = (fabsf(rc.norm(RC_LEFT)) < 0.1f) &&
                        (fabsf(rc.norm(RC_RIGHT)) < 0.1f);
@@ -556,12 +550,11 @@ void loop() {
   in.modeSelect = modeIndex;
 
   sm.update(in);
-  if (sm.justReengaged()) { headingPID.reset(); distancePID.reset(); }
 
   // Advance the heading estimate, and capture the setpoint when we ENGAGE
   // HEADING_HOLD. Re-grab only on a *fresh* engage: if HEADING_HOLD was
-  // interrupted only briefly (a glitch on the bypass/RC inputs bouncing the
-  // state machine), keep the existing setpoint so the lock doesn't wander.
+  // interrupted only briefly (an RC-link glitch bouncing the state machine),
+  // keep the existing setpoint so the lock doesn't wander.
   if (imuOk) ahrs.update(dt);
   static uint32_t lastHHms = 0;
   uint32_t nowMs = millis();
@@ -683,7 +676,7 @@ void loop() {
   portENTER_CRITICAL(&snapMux);
   snap.mode = sm.mode(); snap.left = cmdL; snap.right = cmdR;
   snap.appliedL = driver.lastL; snap.appliedR = driver.lastR;
-  snap.battV = battery.volts(); snap.linkOk = linkOk; snap.bypassManual = bypassManual;
+  snap.battV = battery.volts(); snap.linkOk = linkOk;
   snap.armReq = in.armRequest; snap.modeSel = in.modeSelect;
   snap.heading = imuOk ? ahrs.deg() : 0.0f;
   snap.setpoint = headingSetpoint;

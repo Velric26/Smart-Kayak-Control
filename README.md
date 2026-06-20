@@ -31,8 +31,8 @@ src/
     L298N_Driver.*            mule (analogWrite + direction pins)
     ESC_Driver.*              kayak (ESP32Servo, 1000-2000 us)
     RCReceiver.*              parallel interrupt capture of DS600 channels
-    BatteryMonitor.*          2S Li-ion sense + thresholds
-    BypassSense.h             3PDT position sense (GPIO13, stubbed until wired)
+    BatteryMonitor.*          2S Li-ion sense + thresholds (disabled till divider wired)
+    GPS.*                     NEO-8M reader (TinyGPSPlus) + GST accuracy estimate
   control/
     PID.h                     anti-windup PID + heading-error helper
     Mixer.h                   differential mix + slew limiter
@@ -49,10 +49,11 @@ the same pins serve the L298N enables now and the ESC signals later.
 
 Manual differential drive from the DS600, arming (sticks-centered guard),
 RC-loss → FAILSAFE → neutral, battery-critical failsafe, slew-limited smooth
-output, and serial telemetry. The 3PDT bypass-sense and ESC driver are wired
-into the structure and compile, but the switch/ESC aren't installed yet —
-`BypassSense` reads AUTO on an unconnected pin, and autonomous modes are inert
-(no IMU/GPS mounted).
+output, and serial telemetry. The ESC driver compiles for the kayak target but the ESCs aren't installed
+yet. The 3PDT hardware-bypass logic has been **removed from firmware** until
+the switch is in hand (a floating GPIO13 was glitching the state machine) —
+GPIO13 is reserved and the design is kept in `docs/architecture.md` §1.6.
+IMU heading, GPS, and Smart Anchor are implemented (see CLAUDE.md for current state).
 
 ## Roadmap hooks (where later phases plug in)
 

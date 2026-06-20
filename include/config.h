@@ -83,8 +83,10 @@ constexpr int PIN_RC_MODE = 4;   // MODE : CH6 MOMENTARY button (press = cycle)
 // Battery sense (ADC1, input-only)
 constexpr int PIN_BATT_SENSE = 34;
 
-// 3PDT bypass position sense (third pole). Unconnected until the switch
-// is installed; INPUT_PULLUP makes an unwired pin read HIGH == AUTO.
+// 3PDT bypass position sense (third pole). RESERVED — not read in firmware
+// yet (the bypass logic was removed; a floating pin here was glitching the
+// state machine). Re-add BypassSense + the StateMachine level-0 branch when
+// the 3PDT is installed. See docs/architecture.md §1.6.
 constexpr int PIN_BYPASS_SENSE = 13;
 
 // Status LED (onboard)
@@ -173,8 +175,8 @@ constexpr float MOTOR_MAX_R = 0.70f;    // right max duty
 //  Re-run diag_calib and update these if the IMU is remounted or the
 //  board's nearby metal changes (e.g. final kayak install).
 // ---------------------------------------------------------------------
-constexpr float MAG_OFF[3]   = {-509.5,  68.5f,  -0.5f};  // hard-iron center
-constexpr float MAG_SCALE[3] = {0.827f, 0.855f, 1.607f}; // soft-iron scale
+constexpr float MAG_OFF[3]   = {-409.0,  -98.0f,  123.0f};  // hard-iron center
+constexpr float MAG_SCALE[3] = {0.765f, 0.822f, 2.093f}; // soft-iron scale
 
 // ---------------------------------------------------------------------
 //  Heading fusion (complementary filter: gyro-Z + magnetic compass).
@@ -184,9 +186,9 @@ constexpr float HEADING_FUSE_ALPHA = 0.98f; // gyro trust per step (higher = smo
 constexpr float HEADING_TURN_SIGN  = +1.0f; // flip to -1 if HEADING_HOLD turns AWAY from the setpoint
 constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn) - stops setpoint hunting
 // Grace window: if HEADING_HOLD drops out for less than this, keep the existing
-// setpoint instead of re-grabbing the current heading. Masks brief input
-// glitches (floating bypass pin / RC flicker) that would otherwise bounce the
-// state machine and move the setpoint with no operator input.
+// setpoint instead of re-grabbing the current heading. Masks brief RC-link
+// glitches (FAILSAFE flicker) that would otherwise bounce the state machine
+// and move the setpoint with no operator input.
 constexpr uint32_t HEADING_REGRAB_MS = 750;
 
 // ---------------------------------------------------------------------

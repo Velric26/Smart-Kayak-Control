@@ -19,11 +19,15 @@ const char* modeName(Mode m);
 struct SMInputs {
   bool rcLinkOk      = false;  // RC fresh on critical channels
   bool batteryCritical = false;
-  bool bypassManual  = false;  // 3PDT in MANUAL (MCU removed from loop)
   bool armRequest    = false;  // arm channel asserted
   bool sticksNeutral = true;   // throttle/steer near center
   int  modeSelect    = 0;      // 0=MANUAL,1=HEADING,2=ANCHOR,3=ANCHOR+HDG
 };
+
+// NOTE: the 3PDT hardware-bypass input — and the bumpless re-engage it drove
+// (justReengaged) — are deferred until the switch is installed. GPIO13
+// (PIN_BYPASS_SENSE) is reserved but NOT read in firmware. Re-add both here
+// and in StateMachine.cpp when the 3PDT arrives (see docs/architecture.md §1.6).
 
 class StateMachine {
 public:
@@ -31,13 +35,6 @@ public:
   void update(const SMInputs& in);
   Mode mode() const { return mode_; }
 
-  // True on the tick where control just returned to the MCU
-  // (bypass MANUAL->AUTO, or FAILSAFE->armed). Consumers reset
-  // controllers / re-capture setpoints for bumpless transfer (§8.5).
-  bool justReengaged() const { return reengaged_; }
-
 private:
   Mode mode_ = Mode::BOOT;
-  bool reengaged_ = false;
-  bool wasBypassed_ = false;
 };
