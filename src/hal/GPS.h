@@ -30,7 +30,9 @@ public:
   // This is a real error estimate (unlike HDOP, which is only geometry). Big
   // (99.9) until GST carries a valid fix. Gate ANCHOR capture on this.
   float  accM() {
+    // Stale GST (module stopped sending) must not read as "good accuracy".
     if (!gstLat_.isValid() || !gstLon_.isValid()) return 99.9f;
+    if (gstLat_.age() > 3000 || gstLon_.age() > 3000) return 99.9f;
     float a = atof(gstLat_.value()), b = atof(gstLon_.value());
     if (a <= 0.0f && b <= 0.0f) return 99.9f;
     return sqrtf(a * a + b * b);

@@ -38,6 +38,16 @@
 BluetoothSerial SerialBT;   // mirrors telemetry + tuning input over BT SPP
 Preferences     prefs;      // NVS store for auto-tuned heading gains
 
+// Serializes all console output: telemetry runs on core 0, console/cal echoes
+// on core 1, and BluetoothSerial is not reentrant. All prints go through emit().
+SemaphoreHandle_t ioMux = nullptr;
+inline void emit(const char* s) {
+  if (ioMux) xSemaphoreTake(ioMux, portMAX_DELAY);
+  Serial.print(s);
+  SerialBT.print(s);
+  if (ioMux) xSemaphoreGive(ioMux);
+}
+
 RCReceiver     rc;
 BatteryMonitor battery;
 BypassSense    bypass;
@@ -108,7 +118,7 @@ float cmdL = 0, cmdR = 0;   // slew-limited outputs (persist across ticks)
 //  Telemetry task (core 0) — serial for now; WiFi/BLE later (Phase 7).
 // ---------------------------------------------------------------------
 void telemetryTask(void*) {
-  char line[220];
+  char line[256];
   for (;;) {
     int hz = logHz;
     if (hz <= 0) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }  // muted
@@ -129,14 +139,14 @@ void telemetryTask(void*) {
              s.linkOk ? "OK" : "LOST",
              s.bypassManual ? "  BYPASS=MANUAL" : "",
              (unsigned long)s.dropouts);
-    Serial.print(line);
-    SerialBT.print(line);
+    emit(line);
   }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(200);
+  ioMux = xSemaphoreCreateMutex();   // guards Serial/SerialBT across cores
   SerialBT.begin(BT_DEVICE_NAME);
   Serial.printf("Bluetooth SPP up as \"%s\" - pair and open a serial terminal.\r\n", BT_DEVICE_NAME);
 
@@ -211,7 +221,7 @@ struct AutoTune {
   float  winMax = -1e9f, winMin = 1e9f;
   int    savedLog = TELEMETRY_HZ;   // telemetry rate to restore when done
 
-  void echo(const char* s) { Serial.print(s); SerialBT.print(s); }
+  void echo(const char* s) { emit(s); }
 
   void start() {
     active = true; center = ahrs.deg(); sign = 0;
@@ -304,7 +314,7 @@ struct DriveCal {
   bool     atMax = false;
   uint32_t holdStartMs = 0;
 
-  void echo(const char* s) { Serial.print(s); SerialBT.print(s); }
+  void echo(const char* s) { emit(s); }
 
   void start(bool l, bool r, bool runMode) {
     autotune.abort("cal started");
@@ -377,7 +387,7 @@ struct CompassCal {
   uint32_t startMs = 0, lastPrint = 0;
   int  savedLog = TELEMETRY_HZ;
 
-  void echo(const char* s) { Serial.print(s); SerialBT.print(s); }
+  void echo(const char* s) { emit(s); }
 
   void start() {
     if (!imuOk) { echo(">> compass cal: no IMU, cannot calibrate.\r\n"); return; }
@@ -445,7 +455,7 @@ void applyTuningLine(char* buf, uint8_t len) {
     bool kickMode = (n >= 2 && !strcmp(b, "kick"));
     if (!runMode && !kickMode) {
       const char* u = ">> usage: cal kick|run [l|r|both]  |  cal max  |  cal compass\r\n";
-      Serial.print(u); SerialBT.print(u); return;
+      emit(u); return;
     }
     bool l = true, r = true;                        // no side given -> both
     if (n >= 3) { l = (!strcmp(c, "l") || !strcmp(c, "both")); r = (!strcmp(c, "r") || !strcmp(c, "both")); }
@@ -457,7 +467,7 @@ void applyTuningLine(char* buf, uint8_t len) {
     hdgKp = HDG_KP; hdgKd = HDG_KD; headingPID.setGains(hdgKp, HDG_KI, hdgKd);
     char m[80];
     snprintf(m, sizeof(m), ">> gains cleared, reverted to config: kp=%.4f kd=%.4f\r\n", hdgKp, hdgKd);
-    Serial.print(m); SerialBT.print(m);
+    emit(m);
     return;
   }
   char cmd[8]; float val;
@@ -490,8 +500,7 @@ void applyTuningLine(char* buf, uint8_t len) {
              driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
              driver.maxL, driver.maxR, thrustSlew, thrustDecel,
              ahrs.headingOffset(), ancDeadband, ancAccMax, posKp, posKd, logHz);
-    Serial.print(reply);
-    SerialBT.print(reply);
+    emit(reply);
   }
 }
 

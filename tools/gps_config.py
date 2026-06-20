@@ -63,12 +63,16 @@ def send(ser, name, cls, mid, payload):
 def detect(port):
     for baud in BAUDS:
         try:
-            ser = serial.Serial(port, baud, timeout=0.3)
+            ser = serial.Serial()
+            ser.port = port; ser.baudrate = baud; ser.timeout = 0.3
+            # Keep DTR/RTS low so opening doesn't auto-reset an ESP32 bridge.
+            ser.dtr = False; ser.rts = False
+            ser.open()
         except Exception as e:
             print(f"!! cannot open {port}: {e}")
             sys.exit(1)
-        time.sleep(0.3)
-        data = ser.read(600)
+        time.sleep(1.5)            # allow an ESP32 bridge to boot if it reset
+        data = ser.read(1200)
         if b"$" in data and (b"G" in data):
             print(f"Connected {port} @ {baud} (seeing NMEA).")
             return ser, baud

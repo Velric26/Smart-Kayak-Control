@@ -211,7 +211,7 @@ constexpr uint32_t HEADING_REGRAB_MS = 750;
 //  home. Forward thrust is capped by the HAL output caps (MOTOR_MAX_L/R) in
 //  autonomous modes — no separate anchor cap. Live-tunable: "ancdb <m>".
 // ---------------------------------------------------------------------
-constexpr float ANCHOR_DEADBAND_M = 2.0f;  // inside this radius => hold (GPS noise floor)
+constexpr float ANCHOR_DEADBAND_M = 1.0f;  // inside this radius => hold (tight; watch vs accM)
 // Only capture/chase the anchor while horizontal accuracy (GST) is at least
 // this good — keeps us from latching or chasing a noisy fix. Live: "ancacc".
 constexpr float ANCHOR_ACC_MAX_M  = 3.0f;  // require accM <= this (metres)
