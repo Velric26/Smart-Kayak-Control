@@ -13,11 +13,11 @@ reference); `docs/architecture.md` has the design rationale.
 ## Build & flash
 
 ```bash
-# Development rover (L298N H-bridge) — adds TinyGPSPlus
+# Development rover (dual bidirectional ESC)
 pio run -e mule -t upload
 pio device monitor                 # 115200 baud
 
-# Final kayak (dual ESC) — same source, different target
+# Final kayak — same source + driver, just the kayak gain set
 pio run -e kayak -t upload
 
 # Diagnostics (each its own standalone sketch/env)
@@ -30,9 +30,9 @@ pio run -e diag_gps                # NEO-8M NMEA readout (mirrored over Bluetoot
 pio run -e diag_gps_bridge         # ESP32 as a USB<->GPS bridge for gps_config.py
 ```
 
-Target is selected by flags in `platformio.ini` (`DRIVER_L298N`/`DRIVER_ESC`,
-`PLATFORM_MULE`/`PLATFORM_KAYAK`); `build_src_filter` compiles only the driver
-each target needs.
+Both targets run the same dual-ESC driver; they differ only in the gain set
+selected by `PLATFORM_MULE`/`PLATFORM_KAYAK` in `platformio.ini` (plus BT name
+and GPS dynamic model).
 
 ## Structure
 
@@ -42,8 +42,7 @@ src/
   main.cpp                  setup() + control loop (core 1, 100 Hz) + telemetry task (core 0)
   hal/                      Hardware abstraction — the migration boundary
     MotorDriver.h             abstract setThrust(); shared two-tier drive shaping + output cap
-    L298N_Driver.*            mule (analogWrite + direction pins)
-    ESC_Driver.*              kayak (ESP32Servo, 1000-2000 us)
+    ESC_Driver.*              dual bidirectional ESC (ESP32Servo, 1000-2000 us) — rover + kayak
     RCReceiver.*              parallel interrupt capture of the DS600 channels
     BatteryMonitor.*          2S sense (disabled in firmware until the divider is wired)
     GPS.*                     NEO-8M reader (TinyGPSPlus) + GST horizontal-accuracy estimate
@@ -97,14 +96,18 @@ across a `cal max` run to balance the motors) and `/align` (capture `hdg` vs GPS
 
 - Wire the battery divider (`BATT_DIVIDER`, R1=100k/R2=56k → GPIO34), then re-enable
   `BatteryMonitor` and the `batt=` telemetry field.
-- Acquire the 3PDT manual-override switch + dual ESCs for the kayak. The 3PDT
-  bypass logic was **removed from firmware** (a floating GPIO13 glitched the state
-  machine); GPIO13 is reserved and the design is kept in `docs/architecture.md` §1.6.
+- Acquire the 3PDT manual-override switch for the kayak. The 3PDT bypass logic
+  was **removed from firmware** (a floating GPIO13 glitched the state machine);
+  GPIO13 is reserved and the design is kept in `docs/architecture.md` §1.6.
+- The rover already runs the dual ESCs — after the swap, re-verify
+  `MOTOR_L/R_INVERT` and re-tune the drive floors (`cal kick/run/max`), since the
+  ESC deadband differs from the old H-bridge.
 
 ## Roadmap
 
-GPS bring-up ✓ → Smart Anchor ✓ → tilt-compensated heading (for water) →
-waypoints → WiFi telemetry & tuning → ESC swap on the mule → kayak migration.
+GPS bring-up ✓ → Smart Anchor ✓ → ESC migration on the rover ✓ →
+tilt-compensated heading (for water) → waypoints → WiFi telemetry & tuning →
+kayak migration.
 
 ## Notes / verify before relying on it
 

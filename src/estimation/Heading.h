@@ -25,6 +25,10 @@ public:
   void  setHeadingOffset(float d) { headingOffset_ = d; }
   float headingOffset() const { return headingOffset_; }
 
+  // Complementary-filter gyro trust per step (live "fuse"): higher = smoother
+  // but laggier; lower = snappier pull to the absolute compass but noisier.
+  float fuseAlpha = HEADING_FUSE_ALPHA;
+
   // Live magnetometer calibration override (from `cal compass` / NVS). Defaults
   // to the config constants; corrected axis = (raw - off) * scale.
   void setMagCal(const float off[3], const float scale[3]) {

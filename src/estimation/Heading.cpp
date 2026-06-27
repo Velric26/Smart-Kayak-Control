@@ -39,5 +39,5 @@ void HeadingAHRS::update(float dt) {
 
   float predicted = h_ + gz * dt;                       // gyro prediction
   float err = wrapDiff(compass_ - predicted);           // shortest error toward compass
-  h_ = wrap360(predicted + (1.0f - HEADING_FUSE_ALPHA) * err);
+  h_ = wrap360(predicted + (1.0f - fuseAlpha) * err);   // lower fuseAlpha = snappier mag pull
 }

@@ -14,17 +14,19 @@ is the source of truth for pins and tunables.
 ## Golden rules
 - **Validate-first, incremental.** Every change is flashed and confirmed on real hardware
   before moving on. Do not batch up multiple unverified behavioral changes.
-- **The HAL is the migration key.** Mule and kayak differ ONLY in the motor driver
-  (`L298N_Driver` vs `ESC_Driver`) behind `MotorDriver`. Keep platform-specific code
-  out of control/estimation/statemachine layers.
+- **The HAL is the migration key.** Both mule and kayak now run the `ESC_Driver` behind
+  `MotorDriver`; they differ only in the PID gain set (`PLATFORM_MULE`/`PLATFORM_KAYAK`),
+  BT name, and GPS dynamic model. Keep platform-specific code out of
+  control/estimation/statemachine layers. (The retired `L298N_Driver` is in git history.)
 - **Safe state is neutral.** Any fault, disarm, or RC loss => motors to neutral/coast.
 - The mule validates *control behavior*, not water dynamics. Tilt comp, drag, and
   inertia are deferred to the kayak phase.
 
 ## Hardware (REAL, bench-confirmed — differs from generic assumptions)
 - MCU: ESP32 DevKit V1 (WROOM).
-- Mule actuation: L298N H-bridge + 2 brushed DC motors + caster. Power: 2S 18650 (7.4–8.4V).
-- Kayak actuation (FUTURE, not yet acquired): 2x bidirectional ESC + 3PDT manual-override switch.
+- Mule actuation: **2x bidirectional ESC** + 2 brushed DC motors + caster (migrated from the
+  L298N H-bridge). One servo-PWM signal per ESC on GPIO25/26. Power: 2S 18650 (7.4–8.4V).
+- Kayak actuation (FUTURE): same dual-ESC HAL + a 3PDT manual-override switch (not yet acquired).
 - RC: HotRC DS600 / ASPIQUEEN A300 (same unit, rebranded). **TX does the differential
   mixing**; ESP32 receives already-mixed L/R. Buttons: Ch3/4/5 **latching**, Ch6 **momentary**.
 - IMU: GY-801-type 9-DOF module:
@@ -44,9 +46,9 @@ is the source of truth for pins and tunables.
 
 ## Pin map
 Authoritative copy is in `include/config.h`. Key points:
-- Motor PWM L=GPIO25, R=GPIO26 — these become the ESC signal pins later (wire stays, only
-  firmware reconfigures). Kept off strapping pins so future ESC signal is glitch-free at boot.
-- L298N direction: IN1=27, IN2=14, IN3=18, IN4=19 (freed when swapping to ESC).
+- ESC signal L=GPIO25, R=GPIO26 (servo PWM 1000-2000 us, one wire per ESC). Kept off
+  strapping pins so the ESC signal is glitch-free at boot.
+- GPIO 27/14/18/19 are FREE (former L298N direction pins, retired with the H-bridge).
 - I2C: SDA=21, SCL=22. GPS UART2: RX=16, TX=17 (NEO-8M wired & live).
 - RC in: mixed-L=35, mixed-R=36 (VP), Ch5/ARM=39 (VN, latching), Ch6/MODE=4 (momentary).
 - Battery sense=34 (ADC1). 3PDT bypass sense=13 (RESERVED — bypass logic removed
@@ -54,12 +56,13 @@ Authoritative copy is in `include/config.h`. Key points:
 
 ## Build & flash (PlatformIO)
 Run from the project root. `pio` is on PATH (`%USERPROFILE%\.platformio\penv\Scripts`).
-- Mule build:   `pio run -e mule -t upload`   then  `pio device monitor`   (adds TinyGPSPlus dep)
-- Kayak build:  `pio run -e kayak -t upload`   (adds ESP32Servo + TinyGPSPlus deps)
+- Mule build:   `pio run -e mule -t upload`   then  `pio device monitor`
+- Kayak build:  `pio run -e kayak -t upload`
+  (Both use the ESC driver + ESP32Servo + TinyGPSPlus; they differ only in the gain set.)
 - Diagnostics (each is its own env): `diag_i2c`, `diag_imu`, `diag_calib`, `diag_heading`,
-  `diag_fused`, `diag_gps` (NEO-8M NMEA readout, mirrors over Bluetooth so you can roam for sky view).
-  e.g. `pio run -e diag_gps -t upload`
-Env selection in `platformio.ini` swaps the driver via `build_src_filter` + `DRIVER_ESC` flag.
+  `diag_fused`, `diag_gps` (NEO-8M NMEA readout, mirrors over Bluetooth so you can roam for sky view),
+  `diag_gps_bridge` (ESP32 as a USB↔GPS bridge for `tools/gps_config.py`). e.g. `pio run -e diag_gps -t upload`
+Env selection in `platformio.ini` is by `PLATFORM_MULE`/`PLATFORM_KAYAK` (gain set only).
 
 ## Live tuning + calibration (no reflash) — over USB **or** Bluetooth
 The full command reference lives at the **top of `include/config.h`** (CONSOLE REFERENCE block).
@@ -125,17 +128,17 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
   at boot when present), gyro/heading signs, HEADING_FUSE_ALPHA=0.98, motor inverts both true.
 
 ## Pending hardware
-- 3D-print the second-floor IMU mount (away from motor currents), then **re-run mag calibration**
-  (now in-firmware: `cal compass`).
 - Wire the battery divider; then restore the battery failsafe.
-- Acquire 3PDT switch + ESCs for the kayak migration.
-- (GPS NEO-8M now acquired, wired to UART2, and validated — no longer pending.) USB-UART adapter
-  on hand to reconfigure the module in u-center later (update rate / baud) if desired.
+- Acquire the 3PDT manual-override switch for the kayak (then re-add bypass logic + GPIO13 sense).
+- Done: second-floor IMU mount (gyro now sees ~0 motor EMI), mag re-cal (`cal compass`),
+  NEO-8M GPS (configured/validated), and the **rover's ESC migration** (dual bidirectional ESC
+  on GPIO25/26). After the ESC swap, re-verify `MOTOR_L/R_INVERT` and re-tune the drive floors
+  (`cal kick/run/max`) — ESC deadband differs from the old H-bridge.
 
 ## Roadmap
-GPS bring-up ✓ (done) -> **Smart Anchor / position-hold (NEXT)** -> tilt-compensated heading
-(for water) -> waypoints -> WiFi telemetry & runtime tuning -> ESC swap on the mule -> kayak
-migration. See `docs/architecture.md` §10–§11.
+GPS bring-up ✓ -> Smart Anchor / position-hold ✓ -> ESC migration on the rover ✓ ->
+tilt-compensated heading (for water) -> waypoints -> WiFi telemetry & runtime tuning ->
+kayak migration. See `docs/architecture.md` §10–§11.
 
 ## Working in this repo
 - This is now a git repo: make a commit after each validated change instead of re-zipping.

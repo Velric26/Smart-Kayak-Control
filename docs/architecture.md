@@ -2,6 +2,12 @@
 
 Development on the differential-drive mule, migrating with minimal changes to the twin-thruster fishing kayak.
 
+> **STATUS (current):** The rover has **migrated off the L298N H-bridge to dual bidirectional
+> ESCs** (one servo-PWM signal per ESC on GPIO25/26) — the `L298N_Driver` is retired and only
+> `ESC_Driver` ships. References to the L298N below describe the original two-phase development
+> plan (now executed) and remain as design rationale. The 3PDT hardware-bypass (§1.6) is still
+> pending; its firmware logic was removed until the switch is installed (GPIO13 reserved).
+
 ---
 
 ## 0. Guiding Principles

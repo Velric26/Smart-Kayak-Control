@@ -2,8 +2,8 @@
 // =====================================================================
 //  config.h  -  Single source of truth for pins and tunables.
 //  Pin map matches the optimized layout in the architecture doc (§1.1).
-//  Motor PWM lives on GPIO25/26 (clean, non-strapping) so the same two
-//  pins serve the L298N enables now and the ESC signals later.
+//  ESC signals live on GPIO25/26 (clean, non-strapping) — the same pins the
+//  rover used for the L298N enables before it migrated to dual ESCs.
 // =====================================================================
 //
 // =====================================================================
@@ -25,6 +25,7 @@
 //    ancdb <m>   anchor hold radius (m)   ancacc <m>  max GPS accuracy to chase
 //    pkp <v>     distance-PID P gain (anchor return)   pkd <v>  D gain
 //    hoff <deg>  compass->true-north heading trim (for ANCHOR; saved to NVS)
+//    fuse <v>    heading filter gyro-trust (0..0.999); lower = snappier, noisier
 //    log <v>     telemetry rate Hz (0 = mute)
 //
 //  WORD COMMANDS:
@@ -52,16 +53,13 @@
 // ---------------------------------------------------------------------
 //  Pin map  (ESP32 DevKit V1 / WROOM)
 // ---------------------------------------------------------------------
-// Motor PWM  -- ENA/ENB now, ESC L/R signal later. DO NOT move these.
+// ESC signal pins (servo PWM, 1000-2000 us). One wire per ESC; direction is
+// encoded in the pulse width. DO NOT move these (clean, non-strapping).
 constexpr int PIN_MOTOR_PWM_L = 25;
 constexpr int PIN_MOTOR_PWM_R = 26;
 
-// L298N direction pins -- freed when the ESC arrives (ESC encodes
-// direction in pulse width, so these become spare GPIOs).
-constexpr int PIN_DIR_IN1 = 27;  // left  fwd/rev
-constexpr int PIN_DIR_IN2 = 14;
-constexpr int PIN_DIR_IN3 = 18;  // right fwd/rev
-constexpr int PIN_DIR_IN4 = 19;
+// GPIO 27/14/18/19 are now FREE (former L298N direction pins, retired with the
+// H-bridge). Available for future use (e.g. lights, aux, 3PDT wiring).
 
 // I2C bus -- 9-DOF IMU (GY-801-type) shares this bus:
 //   L3G4200D gyro 0x69 | LSM303DLHC accel 0x19, mag 0x1E  (no barometer on this board)
@@ -133,8 +131,11 @@ constexpr float BATT_CRITICAL_V    = 0.0f;
 // ---------------------------------------------------------------------
 //  Output shaping
 // ---------------------------------------------------------------------
-constexpr float THRUST_SLEW_PER_S  = 0.5f;   // accel limit, units/sec (ramp UP) - live "slew"
+constexpr float THRUST_SLEW_PER_S  = 0.5f;   // MANUAL accel limit, units/sec (ramp UP) - live "slew"
 constexpr float THRUST_DECEL_PER_S = 20.0f;  // decel limit, units/sec (ramp DOWN to stop) - live "slewdn"
+// Autonomous modes (HEADING_HOLD / ANCHOR) get their own, faster accel limit so
+// heading corrections aren't throttled by the gentle MANUAL launch ramp. Live "slewa".
+constexpr float THRUST_SLEW_AUTO_PER_S = 4.0f;
 
 // ---------------------------------------------------------------------
 //  Motor direction trim. Flip a flag if a POSITIVE command spins that
@@ -175,14 +176,14 @@ constexpr float MOTOR_MAX_R = 0.70f;    // right max duty
 //  Re-run diag_calib and update these if the IMU is remounted or the
 //  board's nearby metal changes (e.g. final kayak install).
 // ---------------------------------------------------------------------
-constexpr float MAG_OFF[3]   = {-409.0,  -98.0f,  123.0f};  // hard-iron center
-constexpr float MAG_SCALE[3] = {0.765f, 0.822f, 2.093f}; // soft-iron scale
+constexpr float MAG_OFF[3]   = {-89.0, -152.0, 0.0};  // hard-iron center
+constexpr float MAG_SCALE[3] = {0.891, 0.894, 1.317}; // soft-iron scale
 
 // ---------------------------------------------------------------------
 //  Heading fusion (complementary filter: gyro-Z + magnetic compass).
 // ---------------------------------------------------------------------
 constexpr float GYRO_YAW_SIGN      = +1.0f; // flip to -1 if fused heading runs opposite the compass
-constexpr float HEADING_FUSE_ALPHA = 0.98f; // gyro trust per step (higher = smoother, slower mag pull)
+constexpr float HEADING_FUSE_ALPHA = 0.95f; // gyro trust per step (higher = smoother, slower mag pull)
 constexpr float HEADING_TURN_SIGN  = +1.0f; // flip to -1 if HEADING_HOLD turns AWAY from the setpoint
 constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn) - stops setpoint hunting
 // Grace window: if HEADING_HOLD drops out for less than this, keep the existing
@@ -190,6 +191,10 @@ constexpr float HEADING_DEADBAND_DEG = 4.0f; // within this error, hold (no turn
 // glitches (FAILSAFE flicker) that would otherwise bounce the state machine
 // and move the setpoint with no operator input.
 constexpr uint32_t HEADING_REGRAB_MS = 750;
+// Relay auto-tune tolerates HEADING_HOLD dropping out for up to this long (brief
+// RC glitches during the hard wag) before it aborts — lets a tune finish through
+// a momentary disarm instead of bailing on a single bad tick.
+constexpr uint32_t AUTOTUNE_GRACE_MS = 750;
 
 // ---------------------------------------------------------------------
 //  Control gains -- placeholders. Tune on the mule, RE-TUNE on the water.
@@ -199,7 +204,7 @@ constexpr uint32_t HEADING_REGRAB_MS = 750;
   constexpr float HDG_KP = 0.015f, HDG_KI = 0.0f,   HDG_KD = 0.004f;
   constexpr float POS_KP = 0.30f,  POS_KI = 0.02f,  POS_KD = 0.0f;
 #else // PLATFORM_MULE
-  constexpr float HDG_KP = 0.0006f, HDG_KI = 0.0f, HDG_KD = 0.0007f;
+  constexpr float HDG_KP = 0.0007f, HDG_KI = 0.0f, HDG_KD = 0.0006f;
   // POS gain acts on RANGE IN METERS: at this kp, forward saturates ~1/kp metres
   // out (0.30 => full-forward when >~3 m away). Live-tunable: "pkp"/"pkd".
   constexpr float POS_KP = 0.40f,   POS_KI = 0.0f, POS_KD = 0.0f;

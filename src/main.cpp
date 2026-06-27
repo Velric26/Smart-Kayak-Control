@@ -6,8 +6,8 @@
 //  on core 0 so serial/WiFi jitter never disturbs control timing (§2.2).
 //  As IMU/GPS come online (Phases 2/4) they become their own tasks.
 //
-//  Build:  pio run -e mule -t upload   (L298N rover)
-//          pio run -e kayak            (dual-ESC kayak)
+//  Build:  pio run -e mule -t upload   (dual-ESC rover)
+//          pio run -e kayak            (dual-ESC kayak; differs only in gains)
 // =====================================================================
 #include <Arduino.h>
 #include <string.h>
@@ -25,14 +25,10 @@
 #include "estimation/IMU.h"
 #include "estimation/Heading.h"
 
-// ---- HAL selection: the ONLY platform-specific include (§0, §1.2a) ---
-#if defined(DRIVER_ESC)
-  #include "hal/ESC_Driver.h"
-  ESC_Driver   driver;
-#else
-  #include "hal/L298N_Driver.h"
-  L298N_Driver driver;
-#endif
+// ---- Actuation HAL: dual bidirectional ESC (mule rover + kayak). The HAL
+//      keeps this the only place hardware-specific (§0, §1.2a). ----
+#include "hal/ESC_Driver.h"
+ESC_Driver driver;
 
 BluetoothSerial SerialBT;   // mirrors telemetry + tuning input over BT SPP
 Preferences     prefs;      // NVS store for auto-tuned heading gains
@@ -78,8 +74,9 @@ float hdgKp = HDG_KP, hdgKd = HDG_KD, hdgDeadband = HEADING_DEADBAND_DEG;
 // Asymmetric ramp limits (thrust units/sec), live-tunable. "slew" caps accel
 // (ramp up) for less wheelspin; "slewdn" caps decel (ramp down) - keep it high
 // so the rover stops promptly even when slew is low.
-float thrustSlew  = THRUST_SLEW_PER_S;
-float thrustDecel = THRUST_DECEL_PER_S;
+float thrustSlew     = THRUST_SLEW_PER_S;        // MANUAL ramp-up
+float thrustSlewAuto = THRUST_SLEW_AUTO_PER_S;   // HEADING_HOLD/ANCHOR ramp-up (snappier)
+float thrustDecel    = THRUST_DECEL_PER_S;
 
 // Telemetry print rate (Hz), live-adjustable: "log 0" mutes, "log 5" = 5 Hz.
 volatile int logHz = TELEMETRY_HZ;
@@ -210,6 +207,7 @@ struct AutoTune {
   float  center = 0;
   int    sign = 0;
   uint32_t startMs = 0, lastRiseMs = 0;
+  uint32_t lastHHms = 0;      // last tick we were in HEADING_HOLD (dropout grace)
   int    periods = 0;         // completed full periods seen
   static const int WARMUP = 1;   // discard first period (startup transient)
   static const int TARGET = 5;   // periods to average
@@ -223,7 +221,7 @@ struct AutoTune {
     active = true; center = ahrs.deg(); sign = 0;
     periods = 0; periodSum = 0; ampSum = 0;
     winMax = -1e9f; winMin = 1e9f;
-    startMs = lastRiseMs = millis();
+    startMs = lastRiseMs = lastHHms = millis();
     savedLog = logHz; logHz = 0;    // mute telemetry so the result is easy to read
     char m[100];
     snprintf(m, sizeof(m), ">> AUTOTUNE start (amp=%.2f). Keep the area clear - rover will wag in place.\r\n", amp);
@@ -445,7 +443,10 @@ void applyTuningLine(char* buf, uint8_t len) {
   if (!strncmp(buf, "cal", 3)) {
     char a[8], b[8], c[8] = "";
     int n = sscanf(buf, "%7s %7s %7s", a, b, c);   // "cal" "kick"|"run"|"max"|"compass" ["l"|"r"|"both"]
-    if (n >= 2 && !strcmp(b, "compass")) { compasscal.start(); return; }
+    if (n >= 2 && !strcmp(b, "compass")) {        // toggle: 2nd 'cal compass' ends + prints
+      if (compasscal.active) compasscal.finish("done"); else compasscal.start();
+      return;
+    }
     if (n >= 2 && !strcmp(b, "max")) { drivecal.startMax(); return; }
     bool runMode = (n >= 2 && !strcmp(b, "run"));
     bool kickMode = (n >= 2 && !strcmp(b, "kick"));
@@ -487,15 +488,16 @@ void applyTuningLine(char* buf, uint8_t len) {
     else if (!strcmp(cmd, "pkp")) { posKp = val; distancePID.setGains(posKp, POS_KI, posKd); } // dist P
     else if (!strcmp(cmd, "pkd")) { posKd = val; distancePID.setGains(posKp, POS_KI, posKd); } // dist D
     else if (!strcmp(cmd, "hoff")) { ahrs.setHeadingOffset(val); prefs.putFloat("hdgOff", val); } // compass->true-N trim, saved
+    else if (!strcmp(cmd, "fuse")) ahrs.fuseAlpha = constrain(val, 0.0f, 0.999f); // heading filter: lower = snappier
     headingPID.setGains(hdgKp, HDG_KI, hdgKd);
     char reply[280];
     snprintf(reply, sizeof(reply),
              ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f"
-             "  hoff=%.0f ancdb=%.1f ancacc=%.1f pkp=%.3f pkd=%.3f  log=%dHz\r\n",
+             "  hoff=%.0f fuse=%.3f ancdb=%.1f ancacc=%.1f pkp=%.3f pkd=%.3f  log=%dHz\r\n",
              hdgKp, hdgKd, hdgDeadband, autotune.amp,
              driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
              driver.maxL, driver.maxR, thrustSlew, thrustDecel,
-             ahrs.headingOffset(), ancDeadband, ancAccMax, posKp, posKd, logHz);
+             ahrs.headingOffset(), ahrs.fuseAlpha, ancDeadband, ancAccMax, posKp, posKd, logHz);
     emit(reply);
   }
 }
@@ -586,7 +588,12 @@ void loop() {
   prevAnchorMode = sm.mode();
 
   // Auto-tune is only valid while actively holding heading; bail otherwise.
-  if (autotune.active && sm.mode() != Mode::HEADING_HOLD) autotune.abort("left HEADING_HOLD");
+  // Auto-tune tolerates brief HEADING_HOLD dropouts (RC glitches during the
+  // hard wag); abort only if it's been gone longer than the grace window.
+  if (autotune.active) {
+    if (sm.mode() == Mode::HEADING_HOLD) autotune.lastHHms = nowMs;
+    else if (nowMs - autotune.lastHHms > AUTOTUNE_GRACE_MS) autotune.abort("left HEADING_HOLD");
+  }
 
   // ---- Decide target thrust by mode ----
   float tgtL = 0, tgtR = 0;
@@ -660,8 +667,10 @@ void loop() {
     drivecal.step();             // bench calibration drives motors directly via setRaw()
     cmdL = cmdR = 0;             // hold slew state neutral so normal control resumes cleanly
   } else {
-    // asymmetric slew: gentle accel, quick stop
-    float accStep = thrustSlew * dt, decStep = thrustDecel * dt;
+    // asymmetric slew: gentle accel, quick stop. MANUAL uses the soft launch
+    // ramp; autonomous modes get the faster one so corrections aren't sluggish.
+    float accRate = (sm.mode() == Mode::MANUAL) ? thrustSlew : thrustSlewAuto;
+    float accStep = accRate * dt, decStep = thrustDecel * dt;
     cmdL = slewAsym(tgtL, cmdL, accStep, decStep);
     cmdR = slewAsym(tgtR, cmdR, accStep, decStep);
     if (armed) {
