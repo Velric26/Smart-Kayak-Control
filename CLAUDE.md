@@ -23,10 +23,22 @@ is the source of truth for pins and tunables.
   inertia are deferred to the kayak phase.
 
 ## Hardware (REAL, bench-confirmed — differs from generic assumptions)
-- MCU: ESP32 DevKit V1 (WROOM).
+- MCU: ESP32 DevKit V1 (WROOM-32 / WROOM-32E). NOTE: replacement boards must be plain ESP32
+  (WROOM) — the BT telemetry uses **Bluetooth Classic / SPP**, which the S3/S2/C3/C6 variants do
+  NOT have (BLE only). An S3 upgrade is viable only after migrating telemetry to BLE or WiFi.
+- ⚠️ **LEVEL-SHIFT THE ESC SIGNAL — never wire GPIO25/26 straight to the ESC.** ESP32 GPIOs are
+  3.3 V and **NOT 5 V tolerant**; the ESC pulls its signal line up to its internal **5 V BEC**, so a
+  direct connection back-feeds 5 V into the GPIO and **destroys the ESP32** (this already killed one
+  board — regulator + chip ran hot, 3V3 sagged to ~2.97 V). ALWAYS interpose a 3.3→5 V shifter:
+  an **Arduino Nano** running `tools/nano_level_shifter.ino` (ESP32 GPIO25/26 → Nano D2/D3 inputs;
+  Nano D9/D10 → ESC signal; common ground) or a **74AHCT125** buffer. No 5 V line ever touches an
+  ESP32 pin. (The RC receiver can drive the ESC directly because the receiver is itself 5 V — that's
+  the future 3PDT manual-bypass path.)
 - Mule actuation: **2x bidirectional ESC** + 2 brushed DC motors + caster (migrated from the
-  L298N H-bridge). One servo-PWM signal per ESC on GPIO25/26. Power: 2S 18650 (7.4–8.4V).
+  L298N H-bridge). One servo-PWM signal per ESC on GPIO25/26, **via the 5 V level shifter** (above).
+  Power: 2S 18650 (7.4–8.4V).
 - Kayak actuation (FUTURE): same dual-ESC HAL + a 3PDT manual-override switch (not yet acquired).
+  Prefer ESCs that accept a **3.3 V signal** to drop the level shifter on the final build.
 - RC: HotRC DS600 / ASPIQUEEN A300 (same unit, rebranded). **TX does the differential
   mixing**; ESP32 receives already-mixed L/R. Buttons: Ch3/4/5 **latching**, Ch6 **momentary**.
 - IMU: GY-801-type 9-DOF module:

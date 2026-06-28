@@ -2,10 +2,10 @@
 #include "hal/MotorDriver.h"
 #include <ESP32Servo.h>
 
-// Dual bidirectional brushed/brushless ESC driver (kayak / future mule).
-// Outputs standard servo PWM: 1000 us full reverse, 1500 us neutral,
-// 2000 us full forward. Uses the SAME GPIOs as the L298N enables, so the
-// hardware migration is just moving two signal wires (§1.2a).
+// Dual bidirectional brushed/brushless ESC driver (mule rover + kayak).
+// Outputs 50 Hz "analog servo mode" PWM: 1000 us full reverse, 1500 us neutral,
+// 2000 us full forward on GPIO25/26 (one signal per ESC). The ESC auto-adapts
+// its endpoints and arms when it sees a stable 1500 us neutral at power-on.
 class ESC_Driver : public MotorDriver {
 public:
   void begin() override;

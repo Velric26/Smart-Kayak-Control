@@ -67,6 +67,7 @@ float       ancDeadband = ANCHOR_DEADBAND_M;
 float       ancAccMax = ANCHOR_ACC_MAX_M;    // require GPS accuracy <= this to capture/chase
 float       posKp = POS_KP, posKd = POS_KD;  // distance-PID gains (anchor return)
 
+
 // Runtime-tunable heading params (adjust live over serial, no reflash):
 //   "kp 0.01"  "kd 0.004"  "db 5"   then Enter.
 float hdgKp = HDG_KP, hdgKd = HDG_KD, hdgDeadband = HEADING_DEADBAND_DEG;
@@ -138,14 +139,16 @@ void telemetryTask(void*) {
 }
 
 void setup() {
+  // ESCs to a stable 1500 us neutral @ 50 Hz FIRST, before the slow BT init, so
+  // the ESC sees a valid arming signal as early as possible after power-up (§1.3).
+  // (Power the ESP32 before the ESC so neutral is present when the ESC powers on.)
+  driver.begin();
+
   Serial.begin(115200);
   delay(200);
   ioMux = xSemaphoreCreateMutex();   // guards Serial/SerialBT across cores
   SerialBT.begin(BT_DEVICE_NAME);
   Serial.printf("Bluetooth SPP up as \"%s\" - pair and open a serial terminal.\r\n", BT_DEVICE_NAME);
-
-  // Outputs to neutral BEFORE anything else (§1.3).
-  driver.begin();
 
   rc.begin();
   battery.begin();

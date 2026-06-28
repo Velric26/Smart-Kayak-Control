@@ -58,6 +58,7 @@ src/
 tools/
   gps_config.py             one-shot UBX configurator for the NEO-8M (5 Hz, SBAS, GST, 38400)
   bt_console.py             live telemetry + tuning console over Bluetooth, with /trim and /align
+  nano_level_shifter.ino    Arduino Nano as a 3.3V->5V servo-PWM shifter (ESP32 -> ESC)
 ```
 
 ## What works now
@@ -111,6 +112,12 @@ kayak migration.
 
 ## Notes / verify before relying on it
 
+- **⚠️ Never wire the ESP32 GPIO directly to the ESC signal.** ESP32 pins are 3.3 V and not
+  5 V tolerant; the ESC pulls its signal line to its 5 V BEC, which back-feeds 5 V into the GPIO
+  and destroys the board. Always go through a 3.3→5 V level shifter — `tools/nano_level_shifter.ino`
+  on an Arduino Nano, or a 74AHCT125. (This already killed one ESP32.)
+- Replacement MCU must be plain ESP32 (WROOM-32/32E): the BT telemetry uses Bluetooth Classic
+  (SPP), which S3/S2/C3/C6 lack. An S3 needs telemetry moved to BLE/WiFi first.
 - The board must be WROOM (GPIO16/17 free for the GPS); WROVER ties those to PSRAM.
 - The DS600 must output per-channel servo PWM (not a single PPM/SBUS stream).
 - Power the NEO-8M from the ESP32 **3V3** rail, not the 2S pack (its LDO maxes ~6 V).
