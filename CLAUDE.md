@@ -150,10 +150,11 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
 - **UWB station-keeping** (incoming: 2x EWT550-7G9T10SP DW3000 modules + an ESP32-S3) — moored
   range-only buoy fused with IMU/GPS to kill anchor drift. Full design in `docs/architecture.md` §12.
 - **2x JGB37-520 gearmotors** (66 rpm, 12V, with quadrature hall **encoder**) — drive upgrade for
-  the test mule. Notes: (1) 12V motors on the 2S pack (7.4–8.4V) run under-volted/slow — may want a
-  3S pack (ESC voltage range permitting). (2) The **encoders unlock closed-loop wheel velocity /
-  odometry** (dead-reckoning position, smoother drive floors). Each motor needs 2 GPIO for A/B —
-  the freed former-L298N pins (GPIO 27/14/18/19) are the natural home for the 4 encoder channels.
+  the test mule. Running 12V motors on the 2S pack (7.4–8.4V) is **intentional**: under-volting
+  keeps them cool and slow, which (with the high gear ratio) is ideal for the test mule — the
+  "under-power" is a non-issue here. The **encoders unlock closed-loop wheel velocity / odometry**
+  (dead-reckoning position, smoother drive floors). Each motor needs 2 GPIO for A/B — the freed
+  former-L298N pins (GPIO 27/14/18/19) are the natural home for the 4 encoder channels.
 - Done: second-floor IMU mount (gyro now sees ~0 motor EMI), mag re-cal (`cal compass`),
   NEO-8M GPS (configured/validated), and the **rover's ESC migration** (dual bidirectional ESC
   on GPIO25/26). After the ESC swap, re-verify `MOTOR_L/R_INVERT` and re-tune the drive floors
