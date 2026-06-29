@@ -25,7 +25,7 @@
 #include "estimation/IMU.h"
 #include "estimation/Heading.h"
 
-// ---- Actuation HAL: dual bidirectional ESC (mule rover + kayak). The HAL
+// ---- Actuation HAL: dual bidirectional ESC (test mule rover + kayak). The HAL
 //      keeps this the only place hardware-specific (§0, §1.2a). ----
 #include "hal/ESC_Driver.h"
 ESC_Driver driver;

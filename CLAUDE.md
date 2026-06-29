@@ -1,7 +1,7 @@
 # Smart Kayak Thruster Control
 
 ESP32 differential-thrust control for a fishing kayak (twin underwater thrusters),
-developed and validated on a 3D-printed land rover ("the mule") first, then migrated
+developed and validated on a 3D-printed land rover ("the test mule") first, then migrated
 to the kayak with minimal change. Goal feature set: manual RC drive, Heading Lock,
 GPS Smart Anchor / position-hold, waypoints.
 
@@ -14,12 +14,12 @@ is the source of truth for pins and tunables.
 ## Golden rules
 - **Validate-first, incremental.** Every change is flashed and confirmed on real hardware
   before moving on. Do not batch up multiple unverified behavioral changes.
-- **The HAL is the migration key.** Both mule and kayak now run the `ESC_Driver` behind
+- **The HAL is the migration key.** Both test mule and kayak now run the `ESC_Driver` behind
   `MotorDriver`; they differ only in the PID gain set (`PLATFORM_MULE`/`PLATFORM_KAYAK`),
   BT name, and GPS dynamic model. Keep platform-specific code out of
   control/estimation/statemachine layers. (The retired `L298N_Driver` is in git history.)
 - **Safe state is neutral.** Any fault, disarm, or RC loss => motors to neutral/coast.
-- The mule validates *control behavior*, not water dynamics. Tilt comp, drag, and
+- The test mule validates *control behavior*, not water dynamics. Tilt comp, drag, and
   inertia are deferred to the kayak phase.
 
 ## Hardware (REAL, bench-confirmed — differs from generic assumptions)
@@ -34,7 +34,7 @@ is the source of truth for pins and tunables.
   Nano D9/D10 → ESC signal; common ground) or a **74AHCT125** buffer. No 5 V line ever touches an
   ESP32 pin. (The RC receiver can drive the ESC directly because the receiver is itself 5 V — that's
   the future 3PDT manual-bypass path.)
-- Mule actuation: **2x bidirectional ESC** + 2 brushed DC motors + caster (migrated from the
+- Test mule actuation: **2x bidirectional ESC** + 2 brushed DC motors + caster (migrated from the
   L298N H-bridge). One servo-PWM signal per ESC on GPIO25/26, **via the 5 V level shifter** (above).
   Power: 2S 18650 (7.4–8.4V).
 - Kayak actuation (FUTURE): same dual-ESC HAL + a 3PDT manual-override switch (not yet acquired).
@@ -68,7 +68,7 @@ Authoritative copy is in `include/config.h`. Key points:
 
 ## Build & flash (PlatformIO)
 Run from the project root. `pio` is on PATH (`%USERPROFILE%\.platformio\penv\Scripts`).
-- Mule build:   `pio run -e mule -t upload`   then  `pio device monitor`
+- Test mule build:   `pio run -e mule -t upload`   then  `pio device monitor`
 - Kayak build:  `pio run -e kayak -t upload`
   (Both use the ESC driver + ESP32Servo + TinyGPSPlus; they differ only in the gain set.)
 - Diagnostics (each is its own env): `diag_i2c`, `diag_imu`, `diag_calib`, `diag_heading`,
@@ -105,7 +105,7 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
   battery, confirming the earlier USB-power stall was a supply/L298N-drop issue.
 - **Bluetooth telemetry mirror:** `BluetoothSerial` (SPP) mirrors all telemetry + accepts the
   live-tuning commands, so you can watch logs and tune off-USB while on battery. Pairs as
-  `SmartKayak-Mule` / `SmartKayak-Kayak`. Use `\r\n` line endings (PC terminals need the CR).
+  `SmartKayak-TestMule` / `SmartKayak-Kayak`. Use `\r\n` line endings (PC terminals need the CR).
 - **Relay auto-tune** (`tune` over the console) drives a bang-bang wag and derives PD gains
   (Åström–Hägglund). CAVEAT: the drive floor is a hard nonlinearity that makes the rover
   limit-cycle, so auto-tune gains tend to oscillate — the **deadband (`db`) is the real cure**.

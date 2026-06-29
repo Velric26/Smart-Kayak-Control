@@ -1,7 +1,7 @@
 # Smart Kayak Thruster Control System — Firmware
 
 ESP32 differential-thrust control, developed and validated on a 3D-printed land
-rover ("the mule") and migrated to a twin-thruster fishing kayak with minimal
+rover ("the test mule") and migrated to a twin-thruster fishing kayak with minimal
 change. One codebase builds for both platforms via PlatformIO environments; the
 only platform-specific code is the motor driver behind the `MotorDriver` HAL.
 
@@ -76,7 +76,7 @@ tools/
   live horizontal-accuracy estimate.
 - **Smart Anchor / position-hold:** capture lat/lon on engage, return home via the
   distance PID (throttle) + heading loop (bearing), gated on GPS accuracy.
-- **Bluetooth telemetry + live tuning** (pairs as `SmartKayak-Mule`/`-Kayak`); all
+- **Bluetooth telemetry + live tuning** (pairs as `SmartKayak-TestMule`/`-Kayak`); all
   values tunable at runtime, heading gains and mag cal persisted in NVS.
 
 See `CLAUDE.md` → "Current state" for the authoritative status and open items.

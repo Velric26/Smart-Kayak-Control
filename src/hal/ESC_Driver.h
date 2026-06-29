@@ -2,7 +2,7 @@
 #include "hal/MotorDriver.h"
 #include <ESP32Servo.h>
 
-// Dual bidirectional brushed/brushless ESC driver (mule rover + kayak).
+// Dual bidirectional brushed/brushless ESC driver (test mule rover + kayak).
 // Outputs 50 Hz "analog servo mode" PWM: 1000 us full reverse, 1500 us neutral,
 // 2000 us full forward on GPIO25/26 (one signal per ESC). The ESC auto-adapts
 // its endpoints and arms when it sees a stable 1500 us neutral at power-on.

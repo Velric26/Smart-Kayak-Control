@@ -115,7 +115,7 @@ constexpr int TELEMETRY_HZ = 5;    // serial/telemetry print rate
 #if defined(PLATFORM_KAYAK)
 constexpr const char* BT_DEVICE_NAME = "SmartKayak-Kayak";
 #else
-constexpr const char* BT_DEVICE_NAME = "SmartKayak-Mule";
+constexpr const char* BT_DEVICE_NAME = "SmartKayak-TestMule";
 #endif
 
 // ---------------------------------------------------------------------
@@ -197,7 +197,7 @@ constexpr uint32_t HEADING_REGRAB_MS = 750;
 constexpr uint32_t AUTOTUNE_GRACE_MS = 750;
 
 // ---------------------------------------------------------------------
-//  Control gains -- placeholders. Tune on the mule, RE-TUNE on the water.
+//  Control gains -- placeholders. Tune on the test mule, RE-TUNE on the water.
 //  Expect kayak gains to differ greatly (inertia + disturbance dominated).
 // ---------------------------------------------------------------------
 #if defined(PLATFORM_KAYAK)

@@ -4,7 +4,7 @@
 // =====================================================================
 //  MotorDriver  -  abstract actuator interface (the migration boundary).
 //  Everything above the HAL speaks only normalized thrust [-1.0, +1.0].
-//  Swapping the actuator (now dual ESC) or mule -> kayak is an implementation swap.
+//  Swapping the actuator (now dual ESC) or test mule -> kayak is an implementation swap.
 // =====================================================================
 class MotorDriver {
 public:

@@ -1,6 +1,6 @@
 # Smart Kayak Thruster Control System — Architecture & Development Plan
 
-Development on the differential-drive mule, migrating with minimal changes to the twin-thruster fishing kayak.
+Development on the differential-drive test mule, migrating with minimal changes to the twin-thruster fishing kayak.
 
 > **STATUS (current):** The rover has **migrated off the L298N H-bridge to dual bidirectional
 > ESCs** (one servo-PWM signal per ESC on GPIO25/26) — the `L298N_Driver` is retired and only
@@ -14,9 +14,9 @@ Development on the differential-drive mule, migrating with minimal changes to th
 
 Three principles drive every decision below:
 
-1. **Hardware Abstraction Layer (HAL) is the migration key.** The control code must never know whether it is driving an L298N brushed motor, a brushed ESC, or a brushless ESC — or whether it is on land or water. Every actuator and sensor sits behind an interface. Swapping the L298N for the dual brushed ESC, and later the mule for the kayak, becomes an implementation swap plus a re-tune, not a rewrite.
+1. **Hardware Abstraction Layer (HAL) is the migration key.** The control code must never know whether it is driving an L298N brushed motor, a brushed ESC, or a brushless ESC — or whether it is on land or water. Every actuator and sensor sits behind an interface. Swapping the L298N for the dual brushed ESC, and later the test mule for the kayak, becomes an implementation swap plus a re-tune, not a rewrite.
 
-2. **The mule validates behavior, not water dynamics.** It will fully validate: RC reading, arming, failsafe, the state machine, heading estimation, the differential mixer, mode switching, and telemetry. It will *not* validate position-hold tuning, because land friction and instant stopping are nothing like a kayak's inertia, drift, and reverse-only braking. Plan to re-tune gains on the water. Make every gain runtime-adjustable over the telemetry link so re-tuning never requires a reflash.
+2. **The test mule validates behavior, not water dynamics.** It will fully validate: RC reading, arming, failsafe, the state machine, heading estimation, the differential mixer, mode switching, and telemetry. It will *not* validate position-hold tuning, because land friction and instant stopping are nothing like a kayak's inertia, drift, and reverse-only braking. Plan to re-tune gains on the water. Make every gain runtime-adjustable over the telemetry link so re-tuning never requires a reflash.
 
 3. **Safe state is "motors neutral."** On water, a runaway is far worse than a drift. Every fault, every uncertainty, every undefined transition collapses to neutral thrust. Arming is explicit and deliberate.
 
@@ -123,9 +123,9 @@ This is the top of the safety stack: a hardware mux that software can never defe
 
 > **Not yet in hand:** the 3PDT and the dual ESC are still to be acquired. Phase 0–1 run on the L298N with GPIO13 unconnected; everything here is wired in at the migration step (§1.2a).
 
-### 1.7 Mechanical / chassis design (3D-printed mule)
+### 1.7 Mechanical / chassis design (3D-printed test mule)
 
-The mule is a two-floor printed chassis. Layout drives heading accuracy as much as the firmware does, because the magnetometer (§1.5) is the most placement-sensitive part on the vehicle.
+The test mule is a two-floor printed chassis. Layout drives heading accuracy as much as the firmware does, because the magnetometer (§1.5) is the most placement-sensitive part on the vehicle.
 
 ```
    [GPS antenna ^ up, clear sky]      [IMU on damped cradle, offset]   <- Floor 2: sensors
@@ -206,7 +206,7 @@ public:
   virtual void disable() = 0;                           // -> neutral, motors off
 };
 
-// Mule today: L298N (sign-magnitude)
+// Test mule today: L298N (sign-magnitude)
 class L298N_Driver : public MotorDriver {
   void setThrust(float l, float r) override {
     driveSide(IN1, IN2, ENA_ch, l);
@@ -285,7 +285,7 @@ void mix(float v, float w, float &left, float &right) {
 }
 ```
 
-This is identical on mule and kayak — differential kinematics transfer directly.
+This is identical on test mule and kayak — differential kinematics transfer directly.
 
 ### 4.2 Heading lock
 
@@ -332,7 +332,7 @@ The "combined position + heading hold" mode is the same outer position loop, but
 
 ## 5. PID Tuning Methodology
 
-**Tune inner loops before outer.** Heading first (on the mule you can twist the rover and watch it recover), then position (push the rover off the anchor point and watch it return).
+**Tune inner loops before outer.** Heading first (on the test mule you can twist the rover and watch it recover), then position (push the rover off the anchor point and watch it return).
 
 Recommended manual procedure per loop:
 1. P only: raise until it responds briskly and just begins to oscillate, then back off ~30–50%.
@@ -363,7 +363,7 @@ struct PID {
 
 - **Runtime-tunable gains.** Expose every gain over telemetry and persist to NVS. This is what makes the on-water re-tune painless — you adjust gains live from your phone/laptop while the kayak is doing its thing, no reflash.
 
-Expect kayak gains to be very different from mule gains (slower, more inertia, disturbance-dominated). The *methodology and code* transfer; the numbers don't.
+Expect kayak gains to be very different from test mule gains (slower, more inertia, disturbance-dominated). The *methodology and code* transfer; the numbers don't.
 
 ---
 
@@ -420,7 +420,7 @@ The arbitration layer enforces 1–3 every cycle. Specific protections:
 - **GPS fix gating:** refuse to enter or stay in anchor without an adequate fix.
 - **Geofence:** a hard boundary; breach → return-to-home or neutral.
 - **Output clamping & arming guard:** the HAL physically cannot command thrust unless armed.
-- **Always carry a paddle and have a physical recovery plan.** Validate every failsafe on the mule, then again on the water with a tether/spotter before trusting it.
+- **Always carry a paddle and have a physical recovery plan.** Validate every failsafe on the test mule, then again on the water with a tether/spotter before trusting it.
 
 ---
 
@@ -479,23 +479,23 @@ Whenever control returns to the MCU — from hardware bypass or from soft overri
 
 Each phase is independently validated before moving on.
 
-**Phase 0 — Foundation.** PlatformIO scaffold, HAL skeleton, `MotorDriver` abstraction. Drive the mule open-loop from serial commands. *Validates the HAL boundary.*
+**Phase 0 — Foundation.** PlatformIO scaffold, HAL skeleton, `MotorDriver` abstraction. Drive the test mule open-loop from serial commands. *Validates the HAL boundary.*
 
 **Phase 1 — RC + manual + failsafe.** Read the DS600 (non-blocking), differential manual drive, deadbands, arming logic, RC-loss → neutral. No sensors yet. *This is your safety backbone; get it bulletproof.*
 
 **Phase 2 — IMU bring-up.** I2C, raw data, gyro-bias / accel / hard- & soft-iron mag calibration (motors running), AHRS filter → stable tilt-compensated heading.
 
-**Phase 3 — Heading lock.** Heading PID, tune on the mule, validate disturbance recovery (twist the rover, watch it correct).
+**Phase 3 — Heading lock.** Heading PID, tune on the test mule, validate disturbance recovery (twist the rover, watch it correct).
 
 **Phase 4 — GPS bring-up.** Parse, fix-quality gating, local tangent-plane conversion, 5 Hz config, position logging over telemetry.
 
-**Phase 5 — Position hold (anchor).** Nested loops, hold-radius deadband. Tune by pushing the rover off target. *Note: tuning here is mule-specific and will be redone on water — that's expected.*
+**Phase 5 — Position hold (anchor).** Nested loops, hold-radius deadband. Tune by pushing the rover off target. *Note: tuning here is test mule-specific and will be redone on water — that's expected.*
 
 **Phase 6 — Combined position + heading.** Add the "hold spot, face chosen heading" mode.
 
 **Phase 7 — State machine + safety + telemetry integration.** Wire all modes, transitions, the full failsafe set, and the live tuning console together.
 
-**Phase 8 — ESC swap on the mule.** Replace `L298N_Driver` with `ESC_Driver`. Everything above the HAL is untouched. Re-validate. *This rehearses the kayak migration with zero water risk.*
+**Phase 8 — ESC swap on the test mule.** Replace `L298N_Driver` with `ESC_Driver`. Everything above the HAL is untouched. Re-validate. *This rehearses the kayak migration with zero water risk.*
 
 **Phase 9 — Kayak migration.** Same firmware, kayak `MotorDriver` config, recalibrate mag, **re-tune gains on the water** via telemetry. First water tests on a tether with a spotter and a paddle. Validate every failsafe before trusting autonomy.
 
@@ -503,7 +503,7 @@ Each phase is independently validated before moving on.
 
 ---
 
-## 11. Mule → Kayak Migration Checklist
+## 11. Test mule → Kayak Migration Checklist
 
 - [ ] Swap `MotorDriver` implementation (ESC config: neutral, range, reverse).
 - [ ] Move ESC signal lines off strapping pins; verify no boot-time twitch.

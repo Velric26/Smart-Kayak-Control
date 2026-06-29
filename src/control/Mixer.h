@@ -3,7 +3,7 @@
 
 // Differential mix: linear velocity v + turn rate w -> left/right thrust.
 // Scales both down on saturation to preserve turn authority (§4.1).
-// Identical on mule and kayak.
+// Identical on test mule and kayak.
 inline void mix(float v, float w, float& left, float& right) {
   left  = v - w;
   right = v + w;
