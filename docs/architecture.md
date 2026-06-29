@@ -517,3 +517,76 @@ Each phase is independently validated before moving on.
 - [ ] First runs tethered, with a paddle and a spotter.
 
 Everything else — state machine, mixer, fusion, RC logic, telemetry — carries over unchanged.
+
+---
+
+## 12. UWB-Assisted Station-Keeping (future)
+
+A planned upgrade to the GPS Smart Anchor, to kill the position **drift** that makes the
+controller chase ghosts while sitting still.
+
+### 12.1 The reframe: detect drift, not absolute position
+For station-keeping we're **detecting drift, not measuring absolute lat/lon**. Cheap GPS's
+problem isn't the ~3 m offset — it's that the reported position **wanders while stationary**, so
+the anchor controller corrects against noise. The goal is therefore a **stable local reference
+frame**, not absolute accuracy. (This is also why the anchor logic gates on `accM` and uses a
+deadband — see §4.3.)
+
+### 12.2 Technologies considered and ruled out
+- **Ultrasonic / acoustic DVL** — technically best for velocity-over-ground, but real units cost
+  more than RTK; cheap echosounders give a single distance, useless for drift.
+- **Optical** — only viable as downward seabed optical-flow in shallow/clear water; dies in murk or depth.
+- **Radar** — wrong fit: cheap modules lack resolution, marine radar is overkill.
+- **WiFi / Bluetooth RSSI** — hopeless over water; signal-strength ranging gives jumpy multi-metre error.
+
+### 12.3 Chosen direction: UWB (Ultra-Wideband)
+UWB measures **time-of-flight directly** (physics, not signal strength) → ~**10 cm** ranging,
+immune to the RSSI problems. DW3000-based boards fit the existing ESP32 stack and give a
+**drift-free local frame** — exactly what station-keeping wants.
+
+### 12.4 Architecture: moored buoy + kayak tag
+Drop a UWB **buoy** on the spot; the kayak holds **relative to it**; retrieve when leaving.
+- **CRITICAL: the buoy must be moored to the bottom.** If it floats free, wind/current push buoy
+  and kayak together and you drift off-spot with **no detected error**. Mooring moves the anchor
+  reference off the kayak onto a small smart buoy, and keeps the kayak's lines clear.
+
+### 12.5 Range
+- Realistic UWB range ~**50–100 m** line-of-sight, less when low over water.
+- **Height is the biggest lever** — elevate both ends to beat surface reflection (free, often doubles range).
+- Then: directional antennas, **long preamble + low data rate** (850/110 kbps, pure software),
+  **channel 5** over 9. TX power is regulatory-capped (minor).
+- ~50 m roamable range with periodic repositioning fits the use case.
+
+### 12.6 Why NOT two modules 30 cm apart (bearing from the kayak)
+A 30 cm two-module pair is a **dead zone** for both bearing methods:
+- **Phase / PDoA** — wavelength at 6.5 GHz is ~4.6 cm, so antennas must sit **~2 cm** apart;
+  30 cm wraps the phase many times → ambiguous.
+- **Trilateration (two ranges)** — wants a **large** baseline; 30 cm subtends <1° at distance,
+  buried under ~10 cm range noise → bearing is random.
+
+### 12.7 Recommended configuration: range-only fusion
+Keep a **single moored buoy as a range-only UWB anchor**, and **fuse that one precise distance
+with the existing GY-801 IMU + GPS**: UWB kills the **radial** drift, the compass/GPS supplies
+**bearing**. This avoids PDoA fiddliness and over-water angle problems entirely. (If true bearing
+from the buoy alone is ever wanted, build a proper ~2 cm PDoA pair using Qorvo's reference antenna
+layout — but expect tight range and loose bearing.)
+
+### 12.8 Hardware ordered (incoming)
+- **2x EWT550-7G9T10SP** UWB modules (DW3000-based) — buoy anchor + kayak tag.
+- **ESP32-S3** (for the UWB subsystem / future BLE+WiFi telemetry path — note: S3 has no BT
+  Classic, so the main firmware's SPP telemetry would move to BLE/WiFi if it runs there).
+- **ESP32 DevKit V1** — drop-in replacement for the board killed by the ESC 5 V back-feed (§1, safety note).
+- **2x INA228** high-precision I2C power monitors with **R015 (0.015 Ω)** and **R002 (0.002 Ω)**
+  shunts — proper battery/motor current + voltage + power telemetry, superseding the planned
+  resistor-divider battery monitor (much better data; re-enables the low-battery failsafe).
+- **BSS138** + **74AHCT125** — 3.3↔5 V level shifting (the 74AHCT125 is the permanent ESC-signal
+  shifter; see §1 safety note and `tools/nano_level_shifter.ino` for the interim Nano version).
+
+### 12.9 Integration sketch (when the hardware lands)
+- Add a `hal/UWB.*` driver (DW3000 over SPI) behind a thin interface, mirroring `hal/GPS.*`:
+  expose `rangeM()` + validity/quality, pumped each control tick.
+- Feed the buoy range into the anchor estimator as the **radial** measurement; keep the heading
+  loop (compass) for bearing. Gate on UWB link quality the way anchor capture gates on `accM`.
+- Telemetry: add a `uwb=<dist>m` field next to `anc=`; bake range-noise / link constants into `config.h`.
+- INA228: add `hal/PowerMonitor.*` (I2C), restore the `batt=` field + low-battery failsafe with
+  real volts/amps/watts instead of the divider.

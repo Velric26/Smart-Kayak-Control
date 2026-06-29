@@ -140,8 +140,15 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
   at boot when present), gyro/heading signs, HEADING_FUSE_ALPHA=0.98, motor inverts both true.
 
 ## Pending hardware
-- Wire the battery divider; then restore the battery failsafe.
+- **Replace the ESP32** (killed by the ESC 5V back-feed — see the LEVEL-SHIFT warning above). New
+  WROOM-32 DevKit + the **74AHCT125** (or interim `tools/nano_level_shifter.ino`) inline on the ESC
+  signal before first power-up. GPS + IMU both survived (verified alive after the failure).
 - Acquire the 3PDT manual-override switch for the kayak (then re-add bypass logic + GPIO13 sense).
+- **INA228 power monitors** (incoming: one R015 0.015Ω + one R002 0.002Ω shunt, I2C) supersede the
+  resistor-divider battery plan — add `hal/PowerMonitor.*`, restore `batt=` + low-battery failsafe
+  with real V/A/W. (The old `BATT_DIVIDER` divider path is now moot.)
+- **UWB station-keeping** (incoming: 2x EWT550-7G9T10SP DW3000 modules + an ESP32-S3) — moored
+  range-only buoy fused with IMU/GPS to kill anchor drift. Full design in `docs/architecture.md` §12.
 - Done: second-floor IMU mount (gyro now sees ~0 motor EMI), mag re-cal (`cal compass`),
   NEO-8M GPS (configured/validated), and the **rover's ESC migration** (dual bidirectional ESC
   on GPIO25/26). After the ESC swap, re-verify `MOTOR_L/R_INVERT` and re-tune the drive floors
@@ -149,8 +156,9 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
 
 ## Roadmap
 GPS bring-up ✓ -> Smart Anchor / position-hold ✓ -> ESC migration on the rover ✓ ->
-tilt-compensated heading (for water) -> waypoints -> WiFi telemetry & runtime tuning ->
-kayak migration. See `docs/architecture.md` §10–§11.
+(ESP32 replacement) -> INA228 power monitoring -> tilt-compensated heading (for water) ->
+waypoints -> UWB-assisted station-keeping (`docs/architecture.md` §12) -> WiFi/BLE telemetry ->
+kayak migration. See `docs/architecture.md` §10–§12.
 
 ## Working in this repo
 - This is now a git repo: make a commit after each validated change instead of re-zipping.
