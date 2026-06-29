@@ -149,6 +149,15 @@ the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glit
   with real V/A/W. (The old `BATT_DIVIDER` divider path is now moot.)
 - **UWB station-keeping** (incoming: 2x EWT550-7G9T10SP DW3000 modules + an ESP32-S3) — moored
   range-only buoy fused with IMU/GPS to kill anchor drift. Full design in `docs/architecture.md` §12.
+- **BNO085 IMU** (big upgrade over the GY-801) — 9-DOF with an **on-chip sensor-fusion processor**
+  (SH-2): outputs absolute orientation / quaternion and **tilt-compensated heading directly**, with
+  dynamic auto-calibration. Impact: replaces the L3G4200D+LSM303DLHC and our complementary filter
+  (`estimation/IMU` + `Heading` fusion); **obviates `cal compass`** (it self-calibrates) and
+  **delivers the roadmap's tilt-compensated heading for free** — a major win for the kayak, which
+  pitches/rolls. Keep it behind the estimation interface (HAL principle) so control/anchor code is
+  untouched; `hoff` (compass→true-north trim) and the fused-heading consumer stay. I2C on the same
+  bus (addr 0x4A/0x4B; needs INT + RST pins and a driver lib, e.g. Adafruit BNO08x / SparkFun BNO080,
+  SHTP/SH-2 protocol). Re-check `HEADING_TURN_SIGN`/axis signs against the new mount.
 - **2x JGB37-520 gearmotors** (66 rpm, 12V, with quadrature hall **encoder**) — drive upgrade for
   the test mule. Running 12V motors on the 2S pack (7.4–8.4V) is **intentional**: under-volting
   keeps them cool and slow, which (with the high gear ratio) is ideal for the test mule — the
