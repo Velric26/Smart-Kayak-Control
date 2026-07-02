@@ -113,6 +113,22 @@
     </div>
   </section>
 
+  <section id="chartsBox" style="grid-column: 1 / 3;">
+    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+      <div style="flex:2; min-width:340px;">
+        <h2>Heading history (60 s) &nbsp;
+          <span style="color:var(--acc)">hdg</span> ·
+          <span style="color:var(--ok)">sp</span> ·
+          <span style="color:var(--warn)">cog</span></h2>
+        <canvas id="hchart" height="170" style="width:100%"></canvas>
+      </div>
+      <div style="flex:0 0 auto;">
+        <h2>Anchor scatter <span style="color:var(--dim); text-transform:none">(rover vs. home)</span></h2>
+        <canvas id="scatter" width="230" height="170"></canvas>
+      </div>
+    </div>
+  </section>
+
   <section id="logBox">
     <h2>Console</h2>
     <div id="log"></div>
@@ -169,11 +185,21 @@ function parseLine(ln) {
   if ((m = RE.anc.exec(ln))) {
     $("ancPill").style.display = "";
     $("anc").textContent = (m[1] ? "wait " : "") + m[2] + " m @ " + m[3] + "°";
-  } else $("ancPill").style.display = "none";
+    if (!ancActive) ancPts.length = 0;           // fresh engage -> clear the scatter
+    ancActive = true;
+    if (!m[1]) {                                  // latched (not "(wait)") -> plot
+      const d = parseFloat(m[2]), b = parseFloat(m[3]) * Math.PI / 180;
+      ancPts.push({ e: -d * Math.sin(b), n: -d * Math.cos(b) });  // rover rel. to home
+      if (ancPts.length > 300) ancPts.shift();
+    }
+  } else { $("ancPill").style.display = "none"; ancActive = false; }
   if ((m = RE.link.exec(ln))) { $("link").textContent = m[1]; $("link").style.color = m[1] === "OK" ? "var(--ok)" : "var(--bad)"; }
   if ((m = RE.drop.exec(ln))) { $("drop").textContent = m[1]; $("drop").style.color = m[1] === "0" ? "" : "var(--warn)"; }
   $("hdgReadout").innerHTML = state.hdg.toFixed(1) + "&deg; <small>sp " + state.sp.toFixed(1) + "&deg;</small>";
+  pushHistory();
   drawCompass();
+  drawHChart();
+  drawScatter();
   return true;
 }
 
@@ -211,6 +237,116 @@ function drawCompass() {
 }
 drawCompass();
 
+// ---- Heading history strip-chart (unwrapped so 359->1 doesn't jump) ----
+const MAXH = 600, WINDOW_S = 60;
+const hist = { t: [], hdg: [], sp: [], cog: [] };
+const lastRaw = { hdg: null, sp: null, cog: null }, off = { hdg: 0, sp: 0, cog: 0 };
+function unwrapDeg(k, v) {
+  if (v === null || isNaN(v)) { lastRaw[k] = null; return null; }
+  if (lastRaw[k] !== null) {
+    const d = v - lastRaw[k];
+    if (d > 180) off[k] -= 360; else if (d < -180) off[k] += 360;
+  }
+  lastRaw[k] = v;
+  return v + off[k];
+}
+function pushHistory() {
+  hist.t.push(performance.now() / 1000);
+  hist.hdg.push(unwrapDeg("hdg", state.hdg));
+  hist.sp.push(unwrapDeg("sp", state.sp));
+  hist.cog.push(unwrapDeg("cog", isNaN(state.cog) ? null : state.cog));
+  while (hist.t.length > MAXH) { hist.t.shift(); hist.hdg.shift(); hist.sp.shift(); hist.cog.shift(); }
+}
+
+const hc = $("hchart"), hx = hc.getContext("2d");
+function drawHChart() {
+  const W = hc.clientWidth || 400, H = hc.height;
+  if (hc.width !== W) hc.width = W;
+  hx.clearRect(0, 0, W, H);
+  if (hist.t.length < 2) return;
+  const now = hist.t[hist.t.length - 1], t0 = now - WINDOW_S;
+  let i0 = 0; while (i0 < hist.t.length && hist.t[i0] < t0) i0++;
+  // autoscale y over visible samples
+  let lo = Infinity, hi = -Infinity;
+  for (const k of ["hdg", "sp", "cog"])
+    for (let i = i0; i < hist.t.length; i++) {
+      const v = hist[k][i];
+      if (v !== null) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    }
+  if (!isFinite(lo)) return;
+  if (hi - lo < 10) { const c = (hi + lo) / 2; lo = c - 5; hi = c + 5; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const X = t => 34 + (W - 40) * (t - t0) / WINDOW_S;
+  const Y = v => H - 16 - (H - 26) * (v - lo) / (hi - lo);
+  // grid: pick a step giving <= 6 lines, labels shown mod 360
+  let step = [5, 10, 15, 30, 45, 90, 180, 360].find(s => (hi - lo) / s <= 6) || 360;
+  hx.strokeStyle = "#222b38"; hx.fillStyle = "#7d8a99";
+  hx.font = "10px Segoe UI"; hx.textAlign = "right"; hx.lineWidth = 1;
+  for (let g = Math.ceil(lo / step) * step; g <= hi; g += step) {
+    hx.beginPath(); hx.moveTo(34, Y(g)); hx.lineTo(W - 6, Y(g)); hx.stroke();
+    hx.fillText((((g % 360) + 360) % 360).toFixed(0) + "°", 30, Y(g) + 3);
+  }
+  const series = (k, color, wid, dash) => {
+    hx.strokeStyle = color; hx.lineWidth = wid; hx.setLineDash(dash || []);
+    hx.beginPath();
+    let pen = false;
+    for (let i = i0; i < hist.t.length; i++) {
+      const v = hist[k][i];
+      if (v === null) { pen = false; continue; }
+      if (!pen) { hx.moveTo(X(hist.t[i]), Y(v)); pen = true; }
+      else hx.lineTo(X(hist.t[i]), Y(v));
+    }
+    hx.stroke(); hx.setLineDash([]);
+  };
+  series("sp",  "#3ddc84", 1.5, [5, 4]);
+  series("cog", "#ffb347", 1.5);
+  series("hdg", "#38b6ff", 2);
+}
+
+// ---- Anchor scatter (rover position relative to home; N up, E right) ----
+const ancPts = [];
+let ancActive = false, ancDeadband = 1.0;   // ancDeadband updated from echo lines
+const sc = $("scatter"), sx = sc.getContext("2d");
+function drawScatter() {
+  const W = sc.width, H = sc.height, Cx = W / 2, Cy = H / 2, R = Math.min(W, H) / 2 - 14;
+  sx.clearRect(0, 0, W, H);
+  sx.fillStyle = "#7d8a99"; sx.font = "10px Segoe UI"; sx.textAlign = "left";
+  sx.fillText("N↑", Cx - 6, 10);
+  let maxD = Math.max(2, ancDeadband * 1.6);
+  for (const p of ancPts) maxD = Math.max(maxD, Math.hypot(p.e, p.n));
+  maxD *= 1.08;
+  const S = R / maxD;
+  // range rings at a tidy step
+  const rstep = [0.5, 1, 2, 5, 10, 20].find(s => maxD / s <= 4) || 20;
+  sx.strokeStyle = "#222b38"; sx.lineWidth = 1;
+  for (let r = rstep; r <= maxD; r += rstep) {
+    sx.beginPath(); sx.arc(Cx, Cy, r * S, 0, 7); sx.stroke();
+    sx.fillText(r + "m", Cx + r * S + 2, Cy - 2);
+  }
+  // hold-radius (deadband) circle
+  sx.strokeStyle = "#3ddc84"; sx.setLineDash([4, 4]);
+  sx.beginPath(); sx.arc(Cx, Cy, ancDeadband * S, 0, 7); sx.stroke();
+  sx.setLineDash([]);
+  // home crosshair
+  sx.strokeStyle = "#7d8a99";
+  sx.beginPath(); sx.moveTo(Cx - 5, Cy); sx.lineTo(Cx + 5, Cy);
+  sx.moveTo(Cx, Cy - 5); sx.lineTo(Cx, Cy + 5); sx.stroke();
+  if (!ancPts.length) {
+    sx.fillText(ancActive ? "waiting for fix…" : "no anchor engaged", 8, H - 8);
+    return;
+  }
+  // trail, fading with age; newest point highlighted
+  for (let i = 0; i < ancPts.length; i++) {
+    const p = ancPts[i], a = 0.15 + 0.85 * (i / ancPts.length);
+    sx.fillStyle = `rgba(124,58,237,${a.toFixed(2)})`;
+    sx.beginPath(); sx.arc(Cx + p.e * S, Cy - p.n * S, 2.4, 0, 7); sx.fill();
+  }
+  const q = ancPts[ancPts.length - 1];
+  sx.fillStyle = "#38b6ff";
+  sx.beginPath(); sx.arc(Cx + q.e * S, Cy - q.n * S, 4, 0, 7); sx.fill();
+}
+drawScatter();
+
 // ---- Log + commands ----
 const log = $("log");
 function addLog(txt, cls) {
@@ -240,8 +376,11 @@ function connect() {
   ws.onmessage = ev => {
     for (const ln of ev.data.split("\n")) {
       const t = ln.trim(); if (!t) continue;
-      if (!parseLine(t)) addLog(t, t.startsWith(">>") ? "echo" : "");
-      else if (window.showTelemetryInLog) addLog(t);
+      if (!parseLine(t)) {
+        addLog(t, t.startsWith(">>") ? "echo" : "");
+        const db = /ancdb=([\d.]+)/.exec(t);       // track hold radius from echoes
+        if (db) { ancDeadband = parseFloat(db[1]); drawScatter(); }
+      } else if (window.showTelemetryInLog) addLog(t);
     }
   };
 }

@@ -52,7 +52,7 @@ class Sim:
         self.drop = 0
         self.log_hz = 5.0
         self.anc_d, self.anc_b = 0.0, 0.0
-        self.vals = dict(kp=0.0006, kd=0.0007, db=4.0, amp=0.45)
+        self.vals = dict(kp=0.0006, kd=0.0007, db=4.0, amp=0.45, ancdb=1.0)
 
     def tick(self, dt: float):
         # slow GPS quality wander
@@ -112,7 +112,7 @@ class Sim:
             self.vals[name] = float(p[1])
             v = self.vals
             return (f">> kp={v['kp']:.4f} kd={v['kd']:.4f} db={v['db']:.1f} "
-                    f"amp={v['amp']:.2f}  log={self.log_hz:.0f}Hz")
+                    f"amp={v['amp']:.2f}  ancdb={v['ancdb']:.1f}  log={self.log_hz:.0f}Hz")
         return f">> [sim] unknown cmd: {cmd}"
 
 
