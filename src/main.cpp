@@ -129,8 +129,10 @@ void telemetryTask(void*) {
     if (s.gpsCog >= 0) snprintf(cogTok, sizeof(cogTok), " cog=%.0f", s.gpsCog);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             "[%-14s] L=%+.2f R=%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s  drop=%lu\r\n",
-             modeName(s.mode), s.appliedL, s.appliedR, s.heading, cogTok, s.setpoint,
+             // L/R are cmd>applied: logical command vs post-drive-shaping motor value,
+             // so the floor/cap envelope is visible (dashboard renders both).
+             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s  drop=%lu\r\n",
+             modeName(s.mode), s.left, s.appliedL, s.right, s.appliedR, s.heading, cogTok, s.setpoint,
              s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "", s.gpsAcc, ancTok,
              s.linkOk ? "OK" : "LOST",
              (unsigned long)s.dropouts);

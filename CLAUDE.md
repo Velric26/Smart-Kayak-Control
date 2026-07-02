@@ -91,8 +91,9 @@ Type + Enter; each value command echoes the whole set. Highlights:
 **Persisted in NVS:** heading gains (from `tune`) and mag cal (from `cal compass`). Everything
 else is RAM-only until baked into `config.h`.
 
-Telemetry line: `L=`/`R=` are the post-drive-shaping values the motors actually get (mode name at
-the line start already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
+Telemetry line: `L=`/`R=` are `cmd>applied` — logical command vs post-drive-shaping motor value,
+so the floor/cap envelope is visible (the web dashboard renders both; mode name at the line start
+already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
 `gps=<sats>s/<hdop> FIX`; `cog=` GPS course (while moving); `anc=<dist>m@<brg>` in anchor modes.
 (`batt=` removed until divider wired.)
 

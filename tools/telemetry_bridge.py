@@ -77,11 +77,22 @@ class Sim:
             self.l = self.r = 0.0
             self.hdg = (self.hdg + random.uniform(-.3, .3)) % 360
 
+    @staticmethod
+    def shaped(v: float) -> float:
+        """Model the firmware drive shaping: 0 stays 0, else the command is
+        remapped into [RUN floor, MAX cap] (~0.20 .. ~0.70 on the test mule)."""
+        if abs(v) < 0.02:
+            return 0.0
+        out = 0.20 + (0.70 - 0.20) * abs(v)
+        return out if v > 0 else -out
+
     def line(self) -> str:
         moving = abs(self.l) + abs(self.r) > .1
         cog = f" cog={self.hdg + random.uniform(-4, 4):.0f}" if moving else ""
         anc = f"  anc={self.anc_d:.1f}m@{self.anc_b:.0f}" if self.mode.startswith("ANCHOR") else ""
-        return (f"[{self.mode:<14}] L={self.l:+.2f} R={self.r:+.2f}  "
+        return (f"[{self.mode:<14}] "
+                f"L={self.l:+.2f}>{self.shaped(self.l):+.2f} "
+                f"R={self.r:+.2f}>{self.shaped(self.r):+.2f}  "
                 f"hdg={self.hdg:5.1f}{cog} sp={self.sp:5.1f}  "
                 f"gps={self.sats}s/{self.hdop:.1f} FIX acc={self.acc:.1f}{anc}  "
                 f"link=OK  drop={self.drop}")
