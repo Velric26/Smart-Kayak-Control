@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-sim",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["tools/telemetry_bridge.py", "--sim", "--http", "8000"],
+      "port": 8000
+    }
+  ]
+}

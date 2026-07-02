@@ -59,6 +59,8 @@ tools/
   gps_config.py             one-shot UBX configurator for the NEO-8M (5 Hz, SBAS, GST, 38400)
   bt_console.py             live telemetry + tuning console over Bluetooth, with /trim and /align
   nano_level_shifter.ino    Arduino Nano as a 3.3V->5V servo-PWM shifter (ESP32 -> ESC)
+  telemetry_bridge.py       web-dashboard backend: --sim fake rover, or BT-COM<->WebSocket bridge
+  dashboard/index.html      single-file web dashboard (compass, thrust, GPS, anchor, console)
 ```
 
 ## What works now
