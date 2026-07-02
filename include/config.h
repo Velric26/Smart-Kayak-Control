@@ -132,6 +132,21 @@ constexpr float BATT_WARN_V        = 6.6f;   // 3.30 V/cell
 constexpr float BATT_CRITICAL_V    = 0.0f;   // (unused while monitor disabled)
 
 // ---------------------------------------------------------------------
+//  INA228 power monitors (I2C, same bus as the IMU). ⚠ HARDWARE NOT YET
+//  ARRIVED — hal/PowerMonitor.* + the diag_power env are prepped but
+//  UNVALIDATED. Planned split: R002 (0.002Ω) on the motor/battery line
+//  (high current), R015 (0.015Ω) on the logic rail. Addresses are set by
+//  the A0/A1 straps (GND/GND=0x40, GND/VS=0x41, ...) — confirm with
+//  diag_i2c on arrival and fix these if the modules are strapped otherwise.
+// ---------------------------------------------------------------------
+constexpr uint8_t INA_BATT_ADDR    = 0x40;   // R002 shunt, motor battery
+constexpr uint8_t INA_LOGIC_ADDR   = 0x41;   // R015 shunt, logic rail
+constexpr float   INA_BATT_SHUNT   = 0.002f; // ohms
+constexpr float   INA_LOGIC_SHUNT  = 0.015f; // ohms
+constexpr float   INA_BATT_MAX_A   = 20.0f;  // full-scale current (sets resolution)
+constexpr float   INA_LOGIC_MAX_A  = 3.0f;
+
+// ---------------------------------------------------------------------
 //  Output shaping
 // ---------------------------------------------------------------------
 constexpr float THRUST_SLEW_PER_S  = 0.5f;   // MANUAL accel limit, units/sec (ramp UP) - live "slew"
@@ -174,13 +189,15 @@ constexpr float MOTOR_MAX_L = 0.70f;    // left  max duty
 constexpr float MOTOR_MAX_R = 0.70f;    // right max duty
 
 // ---------------------------------------------------------------------
-//  Magnetometer calibration (from a diag_calib tumble on this board).
-//  Corrected axis = (raw - MAG_OFF) * MAG_SCALE.
-//  Re-run diag_calib and update these if the IMU is remounted or the
-//  board's nearby metal changes (e.g. final kayak install).
+//  Magnetometer calibration. Corrected axis = (raw - MAG_OFF) * MAG_SCALE.
+//  These are the boot defaults; an NVS cal (from `cal compass`) overrides
+//  them when present. Values below are the last good cal of the current
+//  top mount (X/Y ranges near-identical = clean horizontal response) —
+//  baked here because the NVS copy died with the first ESP32. Re-run
+//  `cal compass` after any remount, nearby-metal change, or kayak install.
 // ---------------------------------------------------------------------
-constexpr float MAG_OFF[3]   = {-89.0, -152.0, 0.0};  // hard-iron center
-constexpr float MAG_SCALE[3] = {0.891, 0.894, 1.317}; // soft-iron scale
+constexpr float MAG_OFF[3]   = {-89.0f, -152.0f, 0.0f};   // hard-iron center
+constexpr float MAG_SCALE[3] = {0.891f, 0.894f, 1.317f};  // soft-iron scale
 
 // ---------------------------------------------------------------------
 //  Heading fusion (complementary filter: gyro-Z + magnetic compass).

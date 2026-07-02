@@ -53,8 +53,9 @@ is the source of truth for pins and tunables.
   baud, 5 Hz, Pedestrian dynamic model, SBAS/WAAS on, GST enabled** (per-axis position sigma ->
   `GPS::accM()` horizontal accuracy in metres, used to gate anchor capture/chase). `GPS_BAUD` in
   `hal/GPS.cpp` + `diag/gps_raw.cpp` is 38400 to match; if you factory-reset the module it reverts
-  to 9600 (re-run the tool). Switch dynModel to **Sea (5)** for the kayak. Guadalajara is ~1500 m,
-  so the Sea model still works (it only constrains vertical dynamics).
+  to 9600 (re-run the tool). **Keep the Pedestrian model on the kayak too** — the u-blox Sea model
+  assumes ≤500 m altitude, and Guadalajara-area lakes sit ~1500 m, so Sea would degrade/reject
+  fixes there. One config for both platforms.
 
 ## Pin map
 Authoritative copy is in `include/config.h`. Key points:
@@ -163,8 +164,10 @@ start already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
   signal before first power-up. GPS + IMU both survived (verified alive after the failure).
 - Acquire the 3PDT manual-override switch for the kayak (then re-add bypass logic + GPIO13 sense).
 - **INA228 power monitors** (incoming: one R015 0.015Ω + one R002 0.002Ω shunt, I2C) supersede the
-  resistor-divider battery plan — add `hal/PowerMonitor.*`, restore `batt=` + low-battery failsafe
-  with real V/A/W. (The old `BATT_DIVIDER` divider path is now moot.)
+  resistor-divider battery plan. **Driver is prepped but UNVALIDATED**: `hal/PowerMonitor.*` +
+  `diag_power` env (plan: R002 @ 0x40 on the motor battery, R015 @ 0x41 on logic — confirm strapped
+  addresses with `diag_i2c` on arrival; constants in `config.h`). After bring-up: wire into main
+  firmware, restore `batt=` + the low-battery failsafe with real V/A/W.
 - **UWB station-keeping** (incoming: 2x EWT550-7G9T10SP DW3000 modules + an ESP32-S3) — moored
   range-only buoy fused with IMU/GPS to kill anchor drift. Full design in `docs/architecture.md` §12.
 - **BNO085 IMU** (big upgrade over the GY-801) — 9-DOF with an **on-chip sensor-fusion processor**
