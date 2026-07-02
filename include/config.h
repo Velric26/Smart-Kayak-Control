@@ -31,6 +31,7 @@
 //  WORD COMMANDS:
 //    tune        start relay heading auto-tune (HEADING_HOLD + IMU only)
 //    stop        abort tune / drive-cal; FINISH+save compass cal
+//    show        echo the full current value set (no changes) - dashboard uses it
 //    clrgains    forget NVS heading gains, revert to config defaults
 //
 //  CALIBRATION ROUTINES:

@@ -84,16 +84,18 @@ Type + Enter; each value command echoes the whole set. Highlights:
   are aliases), `kickms` (kick duration). Output cap: `mxl/mxr` (autonomous modes only).
 - Motion: `slew` (accel/ramp-up), `slewdn` (decel/ramp-down to stop), `amp` (relay amplitude).
 - `log <hz>` telemetry rate (`log 0` mutes; auto-muted during routines).
-- Word cmds: `tune` (relay auto-tune), `stop`, `clrgains` (forget NVS gains).
+- Word cmds: `tune` (relay auto-tune), `stop`, `show` (echo all current values), `clrgains`
+  (forget NVS gains).
 - Cal routines: `cal kick|run l|r|both`, `cal max` (find wheelspin), `cal compass`
   (manual-spin mag hard/soft-iron — applies + saves to NVS, auto-loaded at boot).
 
 **Persisted in NVS:** heading gains (from `tune`) and mag cal (from `cal compass`). Everything
 else is RAM-only until baked into `config.h`.
 
-Telemetry line: `L=`/`R=` are `cmd>applied` — logical command vs post-drive-shaping motor value,
-so the floor/cap envelope is visible (the web dashboard renders both; mode name at the line start
-already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
+Telemetry line: control pipeline per side — `rc=` raw sticks, then `L=`/`R=` as `cmd>applied`
+(logical command vs post-drive-shaping motor value), so accidental RC input and the floor/cap
+envelope are both visible (the web dashboard renders all three stages; mode name at the line
+start already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
 `gps=<sats>s/<hdop> FIX`; `cog=` GPS course (while moving); `anc=<dist>m@<brg>` in anchor modes.
 (`batt=` removed until divider wired.)
 

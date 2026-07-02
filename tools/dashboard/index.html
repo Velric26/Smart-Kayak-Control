@@ -58,6 +58,42 @@
   .bar .fill.rev { background: var(--warn); }
   .bar .fill.cmd { background: #5a6b80; }
   .bar .fill.cmd.rev { background: #8a6b3f; }
+  .bar .fill.raw { background: #3a4556; }
+  .bar .fill.raw.rev { background: #6b5638; }
+  .rowtag { display: inline-block; width: 30px; font-size: .65rem; color: var(--dim);
+            text-transform: uppercase; vertical-align: top; }
+
+  /* ---- Set Values modal ---- */
+  #overlay { position: fixed; inset: 0; background: rgba(4,6,10,.6); display: none;
+             z-index: 50; overflow-y: auto; }
+  #overlay.open { display: block; }
+  #panel { max-width: 980px; margin: 4vh auto; background: var(--panel);
+           border: 1px solid var(--edge); border-radius: 10px; padding: 16px 20px; }
+  #panel h3 { margin: 0 0 4px; color: var(--acc); font-size: 1rem; }
+  #panel .sub { color: var(--dim); font-size: .78rem; margin-bottom: 12px; }
+  .pgroups { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .pgroup { background: #10151d; border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; }
+  .pgroup h4 { margin: 0 0 8px; font-size: .75rem; color: var(--dim);
+               text-transform: uppercase; letter-spacing: .08em; }
+  .prow { display: grid; grid-template-columns: 78px 1fr 22px; align-items: center;
+          gap: 8px; margin-bottom: 6px; }
+  .prow label { font: 12px Consolas, monospace; color: var(--ink); }
+  .prow input { width: 100%; background: #0a0d12; border: 1px solid var(--edge);
+                border-radius: 5px; color: var(--ink); padding: 4px 8px;
+                font: 12px Consolas, monospace; }
+  .prow input.dirty { border-color: var(--warn); }
+  .prow input.fresh { border-color: var(--ok); }
+  .help { cursor: help; position: relative; color: var(--dim); border: 1px solid var(--edge);
+          border-radius: 50%; width: 16px; height: 16px; display: inline-flex;
+          align-items: center; justify-content: center; font-size: 10px; }
+  .help:hover { color: var(--acc); border-color: var(--acc); }
+  .help:hover::after { content: attr(data-tip); position: absolute; right: 20px; top: -6px;
+          z-index: 60; background: #0a0d12; border: 1px solid var(--acc); padding: 8px 10px;
+          border-radius: 6px; width: 250px; white-space: pre-line; font-size: 11px;
+          line-height: 1.45; color: var(--ink); text-align: left; }
+  .calbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .calbtns button.danger { border-color: #7a3b3b; }
+  #panelClose { float: right; }
 
   #logBox { grid-column: 1 / 3; display: flex; flex-direction: column; min-height: 220px; }
   #log { flex: 1; overflow-y: auto; background: #0a0d12; border: 1px solid var(--edge);
@@ -81,8 +117,33 @@
   <span class="pill">link <b id="link">—</b></span>
   <span class="pill">drop <b id="drop">—</b></span>
   <span class="pill" id="ancPill" style="display:none">anchor <b id="anc">—</b></span>
+  <button onclick="openPanel()">⚙ Set Values</button>
   <span id="conn" class="off">disconnected</span>
 </header>
+
+<!-- ---- Set Values / calibration modal ---- -->
+<div id="overlay">
+  <div id="panel">
+    <button id="panelClose" onclick="closePanel()">✕ close</button>
+    <h3>Set Values</h3>
+    <div class="sub">
+      Type a value + <b>Enter</b> to apply immediately (echo confirms &amp; refreshes all fields).
+      Unless noted, values are <b>RAM-only</b> — they reset on reboot until baked into
+      <code>config.h</code>. Hover <span class="help" data-tip="Like this. Each tip explains the
+      parameter, its config.h default, and a sensible range.">?</span> for help.
+    </div>
+    <div class="pgroups" id="pgroups"></div>
+    <div class="pgroup" style="margin-top:14px">
+      <h4>Calibration routines</h4>
+      <div class="calbtns" id="calbtns"></div>
+      <div class="sub" style="margin:8px 0 0">
+        Gyro bias self-calibrates at boot (keep the rover still). There is no RC calibration
+        routine in the firmware. Mag cal and heading gains persist in NVS; everything else is
+        RAM-only.
+      </div>
+    </div>
+  </div>
+</div>
 
 <main>
   <section id="compassBox">
@@ -92,22 +153,25 @@
   </section>
 
   <section>
-    <h2>Thrust — in (command) vs out (applied)</h2>
+    <h2>Control pipeline — RC → command → motor</h2>
     <div class="thrust">
       <div class="tcol">
         <div class="tlabel"><span>LEFT</span><b id="lval">—</b></div>
-        <div class="bar small"><div class="zero"></div><div id="lcbar" class="fill cmd"></div></div>
-        <div class="bar"><div class="zero"></div><div id="lbar" class="fill"></div></div>
+        <div><span class="rowtag">rc</span><div class="bar small" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="lrawbar" class="fill raw"></div></div></div>
+        <div><span class="rowtag">cmd</span><div class="bar small" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="lcbar" class="fill cmd"></div></div></div>
+        <div><span class="rowtag">out</span><div class="bar" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="lbar" class="fill"></div></div></div>
       </div>
       <div class="tcol">
         <div class="tlabel"><span>RIGHT</span><b id="rval">—</b></div>
-        <div class="bar small"><div class="zero"></div><div id="rcbar" class="fill cmd"></div></div>
-        <div class="bar"><div class="zero"></div><div id="rbar" class="fill"></div></div>
+        <div><span class="rowtag">rc</span><div class="bar small" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="rrawbar" class="fill raw"></div></div></div>
+        <div><span class="rowtag">cmd</span><div class="bar small" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="rcbar" class="fill cmd"></div></div></div>
+        <div><span class="rowtag">out</span><div class="bar" style="display:inline-block; width:calc(100% - 34px)"><div class="zero"></div><div id="rbar" class="fill"></div></div></div>
       </div>
     </div>
     <div style="margin-top:6px; font-size:.75rem; color:var(--dim)">
-      thin bar = stick/controller command (full 0–100% scale) · thick bar = motor duty after
-      drive shaping (floor≈kick/run, ceiling≈mxl/mxr)
+      <b>rc</b> = raw stick from the transmitter · <b>cmd</b> = after mode logic (heading/anchor
+      corrections, slew) · <b>out</b> = motor duty after drive shaping (floor≈kick/run,
+      ceiling≈mxl/mxr). Watch rc for accidental stick input.
     </div>
   </section>
 
@@ -162,6 +226,7 @@
 // [MODE          ] L=+0.00 R=+0.00  hdg=174.1 cog=138 sp=  0.0  gps=7s/1.0 FIX acc=1.4  anc=2.1m@045  link=OK  drop=0
 const RE = {
   mode: /^\[([A-Z_]+)\s*\]/,
+  rc:   /rc=([+-][\d.]+)\/([+-][\d.]+)/,
   lr:   /L=([+-][\d.]+)(?:>([+-][\d.]+))?\s+R=([+-][\d.]+)(?:>([+-][\d.]+))?/,
   hdg:  /hdg=\s*([\d.]+)/,        cog: /cog=\s*([\d.]+)/,
   sp:   /sp=\s*([\d.]+)/,         gps: /gps=(\d+)s\/([\d.]+)( FIX)?/,
@@ -175,13 +240,16 @@ function parseLine(ln) {
   if (!RE.mode.test(ln)) return false;           // not a telemetry line (echo etc.)
   let m;
   if ((m = RE.mode.exec(ln))) { $("mode").textContent = m[1]; $("mode").className = "badge " + m[1]; }
+  const rcM = RE.rc.exec(ln);
+  const rawL = rcM ? parseFloat(rcM[1]) : null,
+        rawR = rcM ? parseFloat(rcM[2]) : null;
   if ((m = RE.lr.exec(ln))) {
     // new format: L=cmd>applied; old format: applied only (cmd unknown -> null)
     const cL = m[2] !== undefined ? parseFloat(m[1]) : null,
           aL = m[2] !== undefined ? parseFloat(m[2]) : parseFloat(m[1]),
           cR = m[4] !== undefined ? parseFloat(m[3]) : null,
           aR = m[4] !== undefined ? parseFloat(m[4]) : parseFloat(m[3]);
-    setBar("l", cL, aL); setBar("r", cR, aR);
+    setPipeline("l", rawL, cL, aL); setPipeline("r", rawR, cR, aR);
   }
   if ((m = RE.hdg.exec(ln)))  state.hdg = parseFloat(m[1]);
   state.cog = (m = RE.cog.exec(ln)) ? parseFloat(m[1]) : NaN;
@@ -226,13 +294,18 @@ function fillBar(el, v) {
   if (v >= 0) { el.style.left = "50%"; el.style.width = pct + "%"; }
   else        { el.style.left = (50 - pct) + "%"; el.style.width = pct + "%"; }
 }
-function setBar(side, cmd, applied) {
+function setPipeline(side, raw, cmd, out) {
   const f = v => (v >= 0 ? "+" : "") + v.toFixed(2);
-  $(side + "val").textContent = (cmd === null) ? f(applied)
-                              : "in " + f(cmd) + " → out " + f(applied);
-  fillBar($(side + "bar"), applied);
-  $(side + "cbar").parentElement.style.display = (cmd === null) ? "none" : "";
+  const parts = [];
+  if (raw !== null) parts.push("rc " + f(raw));
+  if (cmd !== null) parts.push("cmd " + f(cmd));
+  parts.push("out " + f(out));
+  $(side + "val").textContent = parts.join(" → ");
+  fillBar($(side + "bar"), out);
+  $(side + "cbar").parentElement.parentElement.style.display = (cmd === null) ? "none" : "";
   if (cmd !== null) fillBar($(side + "cbar"), cmd);
+  $(side + "rawbar").parentElement.parentElement.style.display = (raw === null) ? "none" : "";
+  if (raw !== null) fillBar($(side + "rawbar"), raw);
 }
 
 // ---- Compass ----
@@ -371,6 +444,134 @@ function drawScatter() {
 }
 drawScatter();
 
+// ---- Set Values panel ------------------------------------------------
+// One entry per live-tunable in config.h / the firmware console.
+// key = the name used in the firmware's ">> ..." echo (case-sensitive).
+const PARAMS = [
+  { cmd:"kp",     key:"kp",     group:"Heading loop", def:0.0006, min:0,    max:0.05,  step:0.0005,
+    tip:"Heading P gain — how hard it turns per degree of heading error.\nToo high = oscillates; too low = lazy return.\nSaved to NVS when set by auto-tune." },
+  { cmd:"kd",     key:"kd",     group:"Heading loop", def:0.0007, min:0,    max:0.05,  step:0.0005,
+    tip:"Heading D gain — damps the turn as the error shrinks (fights overshoot).\nRaise if it overshoots the setpoint then settles." },
+  { cmd:"db",     key:"db",     group:"Heading loop", def:4.0,    min:0,    max:20,    step:0.5, unit:"deg",
+    tip:"Heading deadband — inside this error it holds quietly.\nTHE calming knob: widen until it stops hunting, then tune kp/kd for feel." },
+  { cmd:"fuse",   key:"fuse",   group:"Heading loop", def:0.98,   min:0.5,  max:0.999, step:0.005,
+    tip:"Complementary-filter gyro trust per step.\nLower = heading follows the compass more snappily but gets noisier." },
+  { cmd:"hoff",   key:"hoff",   group:"Heading loop", def:0,      min:-180, max:180,   step:1, unit:"deg",
+    tip:"Compass→true-north trim so ANCHOR aims where GPS points.\nSet from hdg-vs-cog while driving straight (bt_console /align).\nSaved to NVS." },
+  { cmd:"amp",    key:"amp",    group:"Heading loop", def:0.45,   min:0.1,  max:1,     step:0.05,
+    tip:"Relay amplitude used by the auto-tune wag.\nRaise if `tune` never oscillates; lower if the wag is violent." },
+
+  { cmd:"slew",   key:"slew",   group:"Motion / drive", def:0.5,  min:0.1,  max:10,    step:0.1, unit:"u/s",
+    tip:"Accel limit (thrust units/second, ramp UP).\nLower = gentler launch, less wheelspin." },
+  { cmd:"slewdn", key:"slewdn", group:"Motion / drive", def:20,   min:1,    max:50,    step:1, unit:"u/s",
+    tip:"Decel limit (ramp DOWN to stop).\nKeep high so stops stay crisp even with a gentle slew." },
+  { cmd:"kickl",  key:"kickL",  group:"Motion / drive", def:0.40, min:0,    max:1,     step:0.01,
+    tip:"LEFT breakaway (KICK) floor — duty that starts the wheel from rest.\nFind it with `cal kick l`." },
+  { cmd:"kickr",  key:"kickR",  group:"Motion / drive", def:0.42, min:0,    max:1,     step:0.01,
+    tip:"RIGHT breakaway (KICK) floor.\nFind it with `cal kick r`." },
+  { cmd:"runl",   key:"runL",   group:"Motion / drive", def:0.20, min:0,    max:1,     step:0.01,
+    tip:"LEFT sustain (RUN) floor — lowest duty that keeps it turning once moving.\nFind it with `cal run l`." },
+  { cmd:"runr",   key:"runR",   group:"Motion / drive", def:0.22, min:0,    max:1,     step:0.01,
+    tip:"RIGHT sustain (RUN) floor.\nFind it with `cal run r`." },
+  { cmd:"kickms", key:"kickMs", group:"Motion / drive", def:50,   min:0,    max:500,   step:10, unit:"ms",
+    tip:"How long the breakaway KICK holds before dropping to the RUN floor." },
+  { cmd:"mxl",    key:"maxL",   group:"Motion / drive", def:0.60, min:0,    max:1,     step:0.01,
+    tip:"LEFT output cap — a full command maps here, not 100%.\nAutonomous modes only (MANUAL keeps full stick).\nTrim mxl/mxr so full-power runs track straight (`cal max`)." },
+  { cmd:"mxr",    key:"maxR",   group:"Motion / drive", def:0.62, min:0,    max:1,     step:0.01,
+    tip:"RIGHT output cap (see mxl)." },
+
+  { cmd:"ancdb",  key:"ancdb",  group:"Anchor / GPS", def:1.0,   min:0.5,  max:10,    step:0.5, unit:"m",
+    tip:"Anchor hold radius — inside this it stops correcting.\nKeep it at or above the GPS accuracy (acc=) or it chases noise." },
+  { cmd:"ancacc", key:"ancacc", group:"Anchor / GPS", def:3.0,   min:1,    max:10,    step:0.5, unit:"m",
+    tip:"Max GPS accuracy (GST sigma, metres) allowed to capture/chase the anchor.\nRarely latches? raise. Want tighter holds? lower." },
+  { cmd:"pkp",    key:"pkp",    group:"Anchor / GPS", def:0.30,  min:0,    max:2,     step:0.05,
+    tip:"Distance P — forward thrust per metre of range to home.\n0.30 = full forward when more than ~3 m out." },
+  { cmd:"pkd",    key:"pkd",    group:"Anchor / GPS", def:0.0,   min:0,    max:2,     step:0.05,
+    tip:"Distance D — damps the approach speed near home (reduces overshoot)." },
+  { cmd:"log",    key:"log",    group:"Anchor / GPS", def:5,     min:0,    max:30,    step:1, unit:"Hz",
+    tip:"Telemetry rate. 0 mutes.\nAuto-muted while routines run, restored after." },
+];
+
+const CALS = [
+  { label:"tune (auto-tune)",  cmd:"tune", confirm:true,
+    tip:"Relay heading auto-tune. HEADING_HOLD + IMU only; the rover WAGS IN PLACE — clear space." },
+  { label:"cal kick L", cmd:"cal kick l", confirm:true, tip:"Push LEFT at the KICK floor from standstill (0.7 s). Does it start?" },
+  { label:"cal kick R", cmd:"cal kick r", confirm:true, tip:"Push RIGHT at the KICK floor from standstill (0.7 s)." },
+  { label:"cal run L",  cmd:"cal run l",  confirm:true, tip:"Kick LEFT to start, then hold the RUN floor (0.7 s). Does it keep turning?" },
+  { label:"cal run R",  cmd:"cal run r",  confirm:true, tip:"Kick RIGHT to start, then hold the RUN floor (0.7 s)." },
+  { label:"cal max",    cmd:"cal max",    confirm:true, tip:"Both motors ramp to FULL at the slew rate, hold 2 s. Wheels clear! Watch for veer/wheelspin." },
+  { label:"cal compass",cmd:"cal compass",confirm:false,
+    tip:"Magnetometer hard/soft-iron cal. Motors stay OFF — spin the rover by hand through full turns, then press again to finish+save (NVS)." },
+  { label:"STOP",       cmd:"stop",       confirm:false, tip:"Abort any running routine; motors to neutral." },
+  { label:"clrgains",   cmd:"clrgains",   confirm:true,  tip:"Forget the NVS-saved heading gains and revert to the config.h defaults." },
+];
+
+const inputs = {};   // cmd -> <input>
+function buildPanel() {
+  const groups = {};
+  for (const p of PARAMS) (groups[p.group] = groups[p.group] || []).push(p);
+  const host = $("pgroups");
+  for (const [name, list] of Object.entries(groups)) {
+    const g = document.createElement("div");
+    g.className = "pgroup";
+    g.innerHTML = "<h4>" + name + "</h4>";
+    for (const p of list) {
+      const row = document.createElement("div");
+      row.className = "prow";
+      const unit = p.unit ? " (" + p.unit + ")" : "";
+      const tip = p.tip + "\n\ndefault " + p.def + unit + " · range " + p.min + " … " + p.max;
+      row.innerHTML =
+        `<label>${p.cmd}</label>` +
+        `<input type="number" step="${p.step}" min="${p.min}" max="${p.max}" placeholder="${p.def}">` +
+        `<span class="help" data-tip="${tip.replace(/"/g, "&quot;")}">?</span>`;
+      const inp = row.querySelector("input");
+      inputs[p.cmd] = inp;
+      inp.addEventListener("input", () => inp.classList.add("dirty"));
+      inp.addEventListener("keydown", e => {
+        if (e.key === "Enter" && inp.value !== "") {
+          sendQ(p.cmd + " " + inp.value);
+          inp.classList.remove("dirty");
+        }
+      });
+      g.appendChild(row);
+    }
+    host.appendChild(g);
+  }
+  const cb = $("calbtns");
+  for (const c of CALS) {
+    const b = document.createElement("button");
+    b.textContent = c.label;
+    b.title = c.tip;
+    if (c.confirm) b.className = "danger";
+    b.onclick = () => {
+      if (c.confirm && !window.confirm(c.tip + "\n\nRun '" + c.cmd + "' now?")) return;
+      sendQ(c.cmd);
+    };
+    cb.appendChild(b);
+  }
+}
+buildPanel();
+
+// Populate the panel from the firmware's ">> key=value ..." echoes.
+function updatePanelFromEcho(txt) {
+  const byKey = {};
+  for (const p of PARAMS) byKey[p.key] = p;
+  for (const m of txt.matchAll(/([A-Za-z]+)=(-?[\d.]+)/g)) {
+    const p = byKey[m[1]];
+    if (!p) continue;
+    const inp = inputs[p.cmd];
+    if (inp && document.activeElement !== inp) {
+      inp.value = m[2];
+      inp.classList.remove("dirty");
+      inp.classList.add("fresh");
+      setTimeout(() => inp.classList.remove("fresh"), 800);
+    }
+  }
+}
+function openPanel()  { $("overlay").classList.add("open"); sendQ("show"); }
+function closePanel() { $("overlay").classList.remove("open"); }
+$("overlay").addEventListener("click", e => { if (e.target.id === "overlay") closePanel(); });
+
 // ---- Log + commands ----
 const log = $("log");
 function addLog(txt, cls) {
@@ -395,13 +596,17 @@ function connect() {
   const wsPort = (parseInt(location.port || "80", 10) + 1);
   const url = "ws://" + location.hostname + ":" + wsPort + "/ws";
   ws = new WebSocket(url);
-  ws.onopen  = () => { $("conn").textContent = "connected"; $("conn").className = "on"; };
+  ws.onopen  = () => {
+    $("conn").textContent = "connected"; $("conn").className = "on";
+    setTimeout(() => sendQ("show"), 300);   // pre-populate the Set Values panel
+  };
   ws.onclose = () => { $("conn").textContent = "disconnected"; $("conn").className = "off"; setTimeout(connect, 1500); };
   ws.onmessage = ev => {
     for (const ln of ev.data.split("\n")) {
       const t = ln.trim(); if (!t) continue;
       if (!parseLine(t)) {
         addLog(t, t.startsWith(">>") ? "echo" : "");
+        if (t.startsWith(">>")) updatePanelFromEcho(t);
         const db = /ancdb=([\d.]+)/.exec(t);       // track hold radius from echoes
         if (db) { ancDeadband = parseFloat(db[1]); drawScatter(); }
       } else if (window.showTelemetryInLog) addLog(t);

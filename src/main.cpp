@@ -95,6 +95,7 @@ struct Snapshot {
   bool  armReq = false;
   int   modeSel = 0;
   float heading = 0, setpoint = 0;
+  float rcL = 0, rcR = 0;             // raw RC sticks (pipeline: rc -> cmd -> applied)
   float appliedL = 0, appliedR = 0;   // post min-drive (what the motor gets)
   uint32_t dropouts = 0;              // masked HEADING_HOLD glitch count
   bool   gpsFix = false;
@@ -129,10 +130,11 @@ void telemetryTask(void*) {
     if (s.gpsCog >= 0) snprintf(cogTok, sizeof(cogTok), " cog=%.0f", s.gpsCog);
     snprintf(line, sizeof(line),
              // batt= omitted - divider not wired yet, see hal/BatteryMonitor.cpp.
-             // L/R are cmd>applied: logical command vs post-drive-shaping motor value,
-             // so the floor/cap envelope is visible (dashboard renders both).
-             "[%-14s] L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s  drop=%lu\r\n",
-             modeName(s.mode), s.left, s.appliedL, s.right, s.appliedR, s.heading, cogTok, s.setpoint,
+             // Control pipeline per side: rc=raw sticks, then L/R as cmd>applied
+             // (logical command vs post-drive-shaping motor value) - the dashboard
+             // renders all three stages.
+             "[%-14s] rc=%+.2f/%+.2f L=%+.2f>%+.2f R=%+.2f>%+.2f  hdg=%5.1f%s sp=%5.1f  gps=%ds/%.1f%s acc=%.1f%s  link=%s  drop=%lu\r\n",
+             modeName(s.mode), s.rcL, s.rcR, s.left, s.appliedL, s.right, s.appliedR, s.heading, cogTok, s.setpoint,
              s.gpsSats, s.gpsHdop, s.gpsFix ? " FIX" : "", s.gpsAcc, ancTok,
              s.linkOk ? "OK" : "LOST",
              (unsigned long)s.dropouts);
@@ -438,12 +440,28 @@ struct CompassCal {
 };
 CompassCal compasscal;
 
+// Echo the full tunable set (every value command replies with this; `show`
+// prints it without changing anything - the web dashboard uses it to populate
+// its Set Values panel).
+void echoAllValues() {
+  char reply[280];
+  snprintf(reply, sizeof(reply),
+           ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f"
+           "  hoff=%.0f fuse=%.3f ancdb=%.1f ancacc=%.1f pkp=%.3f pkd=%.3f  log=%dHz\r\n",
+           hdgKp, hdgKd, hdgDeadband, autotune.amp,
+           driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
+           driver.maxL, driver.maxR, thrustSlew, thrustDecel,
+           ahrs.headingOffset(), ahrs.fuseAlpha, ancDeadband, ancAccMax, posKp, posKd, logHz);
+  emit(reply);
+}
+
 // Live tuning over serial OR Bluetooth (type + Enter). Word commands:
-//   tune / stop / clrgains, cal kick|run l|r|both. Value commands: see below.
+//   tune / stop / show / clrgains, cal kick|run l|r|both. Value commands: see below.
 void applyTuningLine(char* buf, uint8_t len) {
   if (len == 0) return;
   buf[len] = 0;
   if (!strncmp(buf, "tune", 4)) { autotune.start();        return; }
+  if (!strncmp(buf, "show", 4)) { echoAllValues();         return; }
   if (!strncmp(buf, "stop", 4)) { autotune.abort("user stop"); drivecal.stop("aborted"); compasscal.finish("stopped"); return; }
   if (!strncmp(buf, "cal", 3)) {
     char a[8], b[8], c[8] = "";
@@ -495,15 +513,7 @@ void applyTuningLine(char* buf, uint8_t len) {
     else if (!strcmp(cmd, "hoff")) { ahrs.setHeadingOffset(val); prefs.putFloat("hdgOff", val); } // compass->true-N trim, saved
     else if (!strcmp(cmd, "fuse")) ahrs.fuseAlpha = constrain(val, 0.0f, 0.999f); // heading filter: lower = snappier
     headingPID.setGains(hdgKp, HDG_KI, hdgKd);
-    char reply[280];
-    snprintf(reply, sizeof(reply),
-             ">> kp=%.4f kd=%.4f db=%.1f amp=%.2f  kickL=%.2f kickR=%.2f runL=%.2f runR=%.2f kickMs=%lu  maxL=%.2f maxR=%.2f slew=%.1f slewdn=%.1f"
-             "  hoff=%.0f fuse=%.3f ancdb=%.1f ancacc=%.1f pkp=%.3f pkd=%.3f  log=%dHz\r\n",
-             hdgKp, hdgKd, hdgDeadband, autotune.amp,
-             driver.kickL, driver.kickR, driver.runL, driver.runR, (unsigned long)driver.kickMs,
-             driver.maxL, driver.maxR, thrustSlew, thrustDecel,
-             ahrs.headingOffset(), ahrs.fuseAlpha, ancDeadband, ancAccMax, posKp, posKd, logHz);
-    emit(reply);
+    echoAllValues();
   }
 }
 
@@ -690,6 +700,7 @@ void loop() {
   portENTER_CRITICAL(&snapMux);
   snap.mode = sm.mode(); snap.left = cmdL; snap.right = cmdR;
   snap.appliedL = driver.lastL; snap.appliedR = driver.lastR;
+  snap.rcL = rc.norm(RC_LEFT); snap.rcR = rc.norm(RC_RIGHT);
   snap.battV = battery.volts(); snap.linkOk = linkOk;
   snap.armReq = in.armRequest; snap.modeSel = in.modeSelect;
   snap.heading = imuOk ? ahrs.deg() : 0.0f;

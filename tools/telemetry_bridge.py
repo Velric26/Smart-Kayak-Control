@@ -48,19 +48,43 @@ class Sim:
         self.hdg = 137.0
         self.sp = 137.0
         self.l = self.r = 0.0
+        self.rc_l = self.rc_r = 0.0
         self.sats, self.hdop, self.acc = 9, 1.1, 1.6
         self.drop = 0
         self.log_hz = 5.0
         self.anc_d, self.anc_b = 0.0, 0.0
-        self.vals = dict(kp=0.0006, kd=0.0007, db=4.0, amp=0.45, ancdb=1.0)
+        # full tunable set, defaults mirroring config.h (mule gain set)
+        self.vals = dict(kp=0.0006, kd=0.0007, db=4.0, amp=0.45,
+                         kickl=0.40, kickr=0.42, runl=0.20, runr=0.22, kickms=50,
+                         mxl=0.60, mxr=0.62, slew=0.5, slewdn=20.0,
+                         hoff=0.0, fuse=0.98, ancdb=1.0, ancacc=3.0,
+                         pkp=0.30, pkd=0.0)
+
+    def echo_all(self) -> str:
+        """Firmware-identical value echo (same keys/format as echoAllValues())."""
+        v = self.vals
+        return (f">> kp={v['kp']:.4f} kd={v['kd']:.4f} db={v['db']:.1f} amp={v['amp']:.2f}"
+                f"  kickL={v['kickl']:.2f} kickR={v['kickr']:.2f}"
+                f" runL={v['runl']:.2f} runR={v['runr']:.2f} kickMs={int(v['kickms'])}"
+                f"  maxL={v['mxl']:.2f} maxR={v['mxr']:.2f}"
+                f" slew={v['slew']:.1f} slewdn={v['slewdn']:.1f}"
+                f"  hoff={v['hoff']:.0f} fuse={v['fuse']:.3f}"
+                f" ancdb={v['ancdb']:.1f} ancacc={v['ancacc']:.1f}"
+                f" pkp={v['pkp']:.3f} pkd={v['pkd']:.3f}  log={self.log_hz:.0f}Hz")
 
     def tick(self, dt: float):
         # slow GPS quality wander
         self.acc = max(0.8, min(6.0, self.acc + random.uniform(-.05, .05)))
         self.hdop = max(0.7, min(2.5, self.hdop + random.uniform(-.02, .02)))
+        # raw sticks: drive the rover in MANUAL, near-neutral chatter otherwise
         if self.mode == "MANUAL":
-            self.l = max(-1, min(1, self.l + random.uniform(-.08, .1)))
-            self.r = max(-1, min(1, self.r + random.uniform(-.08, .1)))
+            self.rc_l = max(-1, min(1, self.rc_l + random.uniform(-.08, .1)))
+            self.rc_r = max(-1, min(1, self.rc_r + random.uniform(-.08, .1)))
+        else:
+            self.rc_l = random.uniform(-.03, .03)
+            self.rc_r = random.uniform(-.03, .03)
+        if self.mode == "MANUAL":
+            self.l, self.r = self.rc_l, self.rc_r
             self.hdg = (self.hdg + (self.r - self.l) * 40 * dt) % 360
         elif self.mode == "HEADING_HOLD":
             err = (self.sp - self.hdg + 540) % 360 - 180
@@ -77,13 +101,14 @@ class Sim:
             self.l = self.r = 0.0
             self.hdg = (self.hdg + random.uniform(-.3, .3)) % 360
 
-    @staticmethod
-    def shaped(v: float) -> float:
+    def shaped(self, v: float, side: str) -> float:
         """Model the firmware drive shaping: 0 stays 0, else the command is
-        remapped into [RUN floor, MAX cap] (~0.20 .. ~0.70 on the test mule)."""
+        remapped into [RUN floor, MAX cap] using the live-tuned values."""
         if abs(v) < 0.02:
             return 0.0
-        out = 0.20 + (0.70 - 0.20) * abs(v)
+        lo = self.vals["runl" if side == "l" else "runr"]
+        hi = self.vals["mxl" if side == "l" else "mxr"]
+        out = lo + (hi - lo) * abs(v)
         return out if v > 0 else -out
 
     def line(self) -> str:
@@ -91,8 +116,9 @@ class Sim:
         cog = f" cog={self.hdg + random.uniform(-4, 4):.0f}" if moving else ""
         anc = f"  anc={self.anc_d:.1f}m@{self.anc_b:.0f}" if self.mode.startswith("ANCHOR") else ""
         return (f"[{self.mode:<14}] "
-                f"L={self.l:+.2f}>{self.shaped(self.l):+.2f} "
-                f"R={self.r:+.2f}>{self.shaped(self.r):+.2f}  "
+                f"rc={self.rc_l:+.2f}/{self.rc_r:+.2f} "
+                f"L={self.l:+.2f}>{self.shaped(self.l, 'l'):+.2f} "
+                f"R={self.r:+.2f}>{self.shaped(self.r, 'r'):+.2f}  "
                 f"hdg={self.hdg:5.1f}{cog} sp={self.sp:5.1f}  "
                 f"gps={self.sats}s/{self.hdop:.1f} FIX acc={self.acc:.1f}{anc}  "
                 f"link=OK  drop={self.drop}")
@@ -113,17 +139,21 @@ class Sim:
                     self.anc_d, self.anc_b = 6.0, random.uniform(0, 360)
                 return f">> [sim] mode -> {m}"
             return ">> [sim] usage: mode manual|hh|anchor|disarm"
+        if name == "show":
+            return self.echo_all()
         if name == "log" and len(p) > 1:
             self.log_hz = float(p[1])
-            return f">> log={self.log_hz:.0f}Hz"
+            return self.echo_all()
         if name == "stop":
             self.l = self.r = 0
             return ">> [sim] stopped"
+        if name in ("cal", "tune", "clrgains"):
+            return f">> [sim] '{cmd}' acknowledged (routine not simulated)"
+        if name in ("mnl", "mnr"):                 # firmware aliases
+            name = "runl" if name == "mnl" else "runr"
         if name in self.vals and len(p) > 1:
             self.vals[name] = float(p[1])
-            v = self.vals
-            return (f">> kp={v['kp']:.4f} kd={v['kd']:.4f} db={v['db']:.1f} "
-                    f"amp={v['amp']:.2f}  ancdb={v['ancdb']:.1f}  log={self.log_hz:.0f}Hz")
+            return self.echo_all()
         return f">> [sim] unknown cmd: {cmd}"
 
 
