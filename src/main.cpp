@@ -1,10 +1,15 @@
 // =====================================================================
 //  Smart Kayak Thruster Control System  -  firmware entry point
 //
-//  Architecture: the fast control loop runs in loop() (already pinned to
-//  core 1 by the Arduino-ESP32 runtime); a low-rate telemetry task runs
-//  on core 0 so serial/WiFi jitter never disturbs control timing (§2.2).
-//  As IMU/GPS come online (Phases 2/4) they become their own tasks.
+//  Architecture: the 100 Hz control loop runs in loop() (pinned to core 1
+//  by the Arduino-ESP32 runtime) and polls IMU/GPS/RC inline each tick;
+//  a low-rate telemetry task runs on core 0 so serial/Bluetooth jitter
+//  never disturbs control timing (§2.2). All console output goes through
+//  the mutex-guarded emit() because BluetoothSerial is not reentrant.
+//
+//  Console (USB or BT SPP): live tuning + calibration routines - the full
+//  command reference is at the top of include/config.h. The web dashboard
+//  (tools/dashboard) speaks the same telemetry lines and commands.
 //
 //  Build:  pio run -e mule -t upload   (dual-ESC rover)
 //          pio run -e kayak            (dual-ESC kayak; differs only in gains)
@@ -89,11 +94,8 @@ volatile uint32_t hhDropouts = 0;
 // Shared snapshot for the telemetry task (core 0). Guarded by a spinlock.
 struct Snapshot {
   Mode  mode = Mode::BOOT;
-  float left = 0, right = 0;
-  float battV = 0;
+  float left = 0, right = 0;   // slew-limited logical command (pipeline "cmd")
   bool  linkOk = false;
-  bool  armReq = false;
-  int   modeSel = 0;
   float heading = 0, setpoint = 0;
   float rcL = 0, rcR = 0;             // raw RC sticks (pipeline: rc -> cmd -> applied)
   float appliedL = 0, appliedR = 0;   // post min-drive (what the motor gets)
@@ -168,7 +170,7 @@ void setup() {
                 prefs.isKey("hdgKp") ? " (from auto-tune/NVS)" : " (config default)");
 
   headingPID.setGains(hdgKp, HDG_KI, hdgKd);
-  distancePID.setGains(POS_KP, POS_KI, POS_KD);
+  distancePID.setGains(posKp, POS_KI, posKd);   // runtime copies (live "pkp"/"pkd")
 
   imuOk = imu.begin();
   if (imuOk) {
@@ -549,13 +551,15 @@ void loop() {
   if (++battDiv >= CONTROL_HZ / 10) { battery.update(); battDiv = 0; } // ~10 Hz
 
   bool linkOk = rc.linkOk();
+  // One RC read per channel per tick (each read briefly masks interrupts);
+  // reused for arming checks, MANUAL drive, HH forward trim, and telemetry.
+  float rcL = rc.norm(RC_LEFT), rcR = rc.norm(RC_RIGHT);
 
   SMInputs in;
   in.rcLinkOk        = linkOk;
   in.batteryCritical = battery.critical();
   in.armRequest      = rc.norm(RC_ARM) > 0.5f;   // CH5 latching: held = armed
-  in.sticksNeutral   = (fabsf(rc.norm(RC_LEFT)) < 0.1f) &&
-                       (fabsf(rc.norm(RC_RIGHT)) < 0.1f);
+  in.sticksNeutral   = (fabsf(rcL) < 0.1f) && (fabsf(rcR) < 0.1f);
   // MODE: CH6 momentary button -> advance one mode per press (rising edge).
   // If a press doesn't register, this button's active polarity is reversed:
   // change ">  0.5f" to "< -0.5f".
@@ -615,8 +619,8 @@ void loop() {
   switch (sm.mode()) {
     case Mode::MANUAL:
       // Direct differential from the DS600's already-mixed L/R (§8.1).
-      tgtL = rc.norm(RC_LEFT);
-      tgtR = rc.norm(RC_RIGHT);
+      tgtL = rcL;
+      tgtR = rcR;
       break;
 
     case Mode::HEADING_HOLD:
@@ -628,7 +632,7 @@ void loop() {
           float w;
           if (fabsf(err) < hdgDeadband) { w = 0.0f; headingPID.reset(); }  // close enough: hold quietly
           else { w = HEADING_TURN_SIGN * headingPID.update(err, dt); }     // correct
-          float v = 0.5f * (rc.norm(RC_LEFT) + rc.norm(RC_RIGHT));         // optional forward from stick
+          float v = 0.5f * (rcL + rcR);                                    // optional forward from stick
           mix(v, w, tgtL, tgtR);
         }
       } else {
@@ -700,9 +704,8 @@ void loop() {
   portENTER_CRITICAL(&snapMux);
   snap.mode = sm.mode(); snap.left = cmdL; snap.right = cmdR;
   snap.appliedL = driver.lastL; snap.appliedR = driver.lastR;
-  snap.rcL = rc.norm(RC_LEFT); snap.rcR = rc.norm(RC_RIGHT);
-  snap.battV = battery.volts(); snap.linkOk = linkOk;
-  snap.armReq = in.armRequest; snap.modeSel = in.modeSelect;
+  snap.rcL = rcL; snap.rcR = rcR;
+  snap.linkOk = linkOk;
   snap.heading = imuOk ? ahrs.deg() : 0.0f;
   snap.setpoint = headingSetpoint;
   snap.dropouts = hhDropouts;

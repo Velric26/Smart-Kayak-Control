@@ -120,14 +120,16 @@ constexpr const char* BT_DEVICE_NAME = "SmartKayak-TestMule";
 #endif
 
 // ---------------------------------------------------------------------
-//  Battery (2S Li-ion). Tune divider ratio to your resistors (§1.4).
-//  Vbatt = Vadc * BATT_DIVIDER. Example 100k/56k -> ~2.79.
+//  Battery (2S Li-ion). MONITOR CURRENTLY DISABLED in firmware — the
+//  divider was never wired, so BatteryMonitor::update() is a no-op and
+//  warn()/critical() return false (no battery failsafe). The incoming
+//  INA228 power monitors (I2C, real V/A/W) supersede the divider plan:
+//  when they land, add hal/PowerMonitor.* and restore the failsafe +
+//  batt= telemetry there. These constants stay for reference until then.
 // ---------------------------------------------------------------------
-constexpr float BATT_DIVIDER       = 2.79f;
-constexpr float BATT_WARN_V        = 6.6f;  // 3.30 V/cell
-// !!! TEMP for bench: battery failsafe DISABLED (no divider wired on GPIO34).
-// !!! RESTORE to 6.0f (3.00 V/cell) once the battery sense divider is in place.
-constexpr float BATT_CRITICAL_V    = 0.0f;
+constexpr float BATT_DIVIDER       = 2.79f;  // (unused) 100k/56k divider ratio
+constexpr float BATT_WARN_V        = 6.6f;   // 3.30 V/cell
+constexpr float BATT_CRITICAL_V    = 0.0f;   // (unused while monitor disabled)
 
 // ---------------------------------------------------------------------
 //  Output shaping

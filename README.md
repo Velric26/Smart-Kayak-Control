@@ -86,14 +86,24 @@ See `CLAUDE.md` → "Current state" for the authoritative status and open items.
 ## Live tuning & calibration
 
 Over USB **or** Bluetooth — type a command + Enter (CRLF). The full list lives at
-the top of `include/config.h`. Highlights: heading `kp/kd/db`; drive floors
+the top of `include/config.h`. Highlights: heading `kp/kd/db/fuse`; drive floors
 `kickl/kickr/runl/runr/kickms`; output caps `mxl/mxr`; motion `slew/slewdn`;
-anchor `ancdb/ancacc/pkp/pkd`; compass `hoff`; `log <hz>`. Routines: `tune`,
-`cal kick|run|max`, `cal compass`.
+anchor `ancdb/ancacc/pkp/pkd`; compass `hoff`; `log <hz>`; `show` echoes the full
+current set. Routines: `tune`, `cal kick|run|max`, `cal compass`.
 
-`tools/bt_console.py COM5` gives a console with `/trim` (measure heading drift
-across a `cal max` run to balance the motors) and `/align` (capture `hdg` vs GPS
-`cog` to derive the `hoff` compass→true-north trim).
+**Web dashboard** — the full-featured UI (compass, rc→cmd→motor pipeline bars,
+GPS/anchor panels, heading strip-chart, anchor scatter, console, and a Set Values
+panel documenting every tunable with calibration buttons):
+
+```bash
+python tools/telemetry_bridge.py --sim    # fake rover, no hardware needed
+python tools/telemetry_bridge.py COM5     # bridge the Bluetooth COM port (real rover)
+# then open http://localhost:8000
+```
+
+`tools/bt_console.py COM5` is the lighter terminal alternative, with `/trim`
+(measure heading drift across a `cal max` run to balance the motors) and `/align`
+(capture `hdg` vs GPS `cog` to derive the `hoff` compass→true-north trim).
 
 ## Pending hardware
 

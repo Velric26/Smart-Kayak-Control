@@ -213,9 +213,9 @@
       <button onclick="sendQ('stop')">STOP</button>
       <button onclick="sendQ('log 0')">log 0</button>
       <button onclick="sendQ('log 5')">log 5</button>
-      <button onclick="sendQ('cal max')">cal max</button>
+      <button onclick="confirmSend('cal max', 'Both motors ramp to FULL and hold 2 s. Wheels clear?')">cal max</button>
       <button onclick="sendQ('cal compass')">cal compass</button>
-      <button onclick="sendQ('tune')">tune</button>
+      <button onclick="confirmSend('tune', 'Relay auto-tune: the rover WAGS IN PLACE. Clear space?')">tune</button>
     </div>
   </section>
 </main>
@@ -587,6 +587,11 @@ function sendQ(cmd) {
   if (ws && ws.readyState === 1) { ws.send(cmd); addLog(">>> " + cmd, "cmd"); }
   else addLog("(not connected)", "cmd");
 }
+// Guard for commands that move the motors (quick row + cal buttons share it).
+function confirmSend(cmd, warning) { if (window.confirm(warning)) sendQ(cmd); }
+// Debug aid: set window.showTelemetryInLog = true in the browser console to
+// mirror every raw telemetry line into the log pane (parsed lines are
+// normally hidden there to keep the console readable).
 $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 
 // ---- WebSocket (auto-reconnect) ----

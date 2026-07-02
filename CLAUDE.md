@@ -122,12 +122,27 @@ start already conveys arm/mode state). `drop=` masked HEADING_HOLD glitches;
 - **Heading-lock setpoint is glitch-stable:** re-grabbed only after a real disengage
   (`HEADING_REGRAB_MS` grace), so brief input glitches don't walk `sp`. `drop=` in telemetry
   counts masked glitches; with bypass logic removed, a climbing `drop` now points at RC-link flicker.
-- **Phase 4 GPS bring-up DONE:** NEO-8M validated (`diag_gps`, 7 sats / HDOP 1.4) and integrated
-  into the main firmware (`hal/GPS.*`); telemetry shows `gps=`. No motor behavior change yet.
-- **In progress / open:** (1) bake final tuned values into `config.h` (drive floors, caps, slew,
-  heading gains are live/NVS but not yet committed as defaults); (2) **ANCHOR mode** next — capture
-  lat/lon on engage, drive home via `distancePID` (throttle) + the tuned heading loop (bearing),
-  using `TinyGPSPlus::distanceBetween`/`courseTo`.
+- **Phase 4 GPS DONE:** NEO-8M validated and integrated (`hal/GPS.*`), configured to 38400/5 Hz
+  with GST -> `accM()` horizontal accuracy; telemetry shows `gps=`/`acc=`/`cog=`.
+- **Phase 5 Smart Anchor IMPLEMENTED:** on engage, captures lat/lon at the first fix with
+  `accM <= ancacc`; outside `ancdb` it turns to the bearing-home (heading loop) and drives
+  forward scaled by cos(heading error), capped by `mxl/mxr`; ANCHOR_HEADING also holds the
+  engage heading. `hoff` (compass->true-north trim, NVS) aligns the compass with GPS bearings —
+  without it the rover drove ~180° AWAY from home (observed); re-check `hoff` after any IMU
+  remount. A full confirmed home-in run is still pending (blocked on the ESP32 replacement).
+- **Web dashboard** (`tools/dashboard` + `tools/telemetry_bridge.py`): compass, control-pipeline
+  bars (rc -> cmd -> applied), GPS/anchor panels, heading strip-chart, anchor scatter, console,
+  and a Set Values panel (all tunables with docs + cal-routine buttons, populated via `show`).
+  Backend: `--sim` fake rover (no hardware) or BT-COM<->WebSocket bridge (real rover, unchanged
+  firmware). `tools/bt_console.py` is the lighter terminal-based alternative (/trim, /align).
+- **HW status: the ESP32 is DEAD** (ESC 5V back-feed — see the LEVEL-SHIFT warning). GPS, IMU,
+  and the Nano level-shifter were all verified alive afterwards. Firmware builds clean and is
+  ready to flash on the replacement WROOM-32; the BT name changed to `SmartKayak-TestMule`, so
+  re-pair after bring-up.
+- **In progress / open:** (1) replacement ESP32 bring-up (flash, `cal compass`, re-verify
+  `MOTOR_L/R_INVERT`, re-tune drive floors for the ESC deadband, re-set `hoff`); (2) bake the
+  final tuned values into `config.h` once re-validated (live/NVS values are lost with the dead
+  board's NVS).
 
 ## Provisional / "do not forget" config values
 - Drive shaping is now **two-tier per-side** (`MOTOR_KICK_L/R`, `MOTOR_RUN_L/R`, `MOTOR_KICK_MS`)
